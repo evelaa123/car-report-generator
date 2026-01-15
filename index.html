@@ -9,76 +9,42 @@
     <style>
         @import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap');
         
-        * {
-            font-family: 'Inter', sans-serif;
-        }
+        * { font-family: 'Inter', sans-serif; }
         
-        ::-webkit-scrollbar {
-            width: 8px;
-            height: 8px;
-        }
+        ::-webkit-scrollbar { width: 8px; height: 8px; }
+        ::-webkit-scrollbar-track { background: #1e1e2e; }
+        ::-webkit-scrollbar-thumb { background: #4a4a6a; border-radius: 4px; }
+        ::-webkit-scrollbar-thumb:hover { background: #5a5a7a; }
         
-        ::-webkit-scrollbar-track {
-            background: #1e1e2e;
-        }
-        
-        ::-webkit-scrollbar-thumb {
-            background: #4a4a6a;
-            border-radius: 4px;
-        }
-        
-        ::-webkit-scrollbar-thumb:hover {
-            background: #5a5a7a;
-        }
-        
-        .gradient-bg {
-            background: linear-gradient(135deg, #1a1a2e 0%, #16213e 50%, #0f3460 100%);
-        }
-        
-        .card-gradient {
-            background: linear-gradient(145deg, #1e1e32 0%, #252540 100%);
-        }
+        .gradient-bg { background: linear-gradient(135deg, #1a1a2e 0%, #16213e 50%, #0f3460 100%); }
+        .card-gradient { background: linear-gradient(145deg, #1e1e32 0%, #252540 100%); }
         
         .btn-primary {
             background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
             transition: all 0.3s ease;
         }
-        
         .btn-primary:hover {
             transform: translateY(-2px);
             box-shadow: 0 10px 30px rgba(102, 126, 234, 0.4);
         }
         
-        .btn-secondary {
-            background: linear-gradient(135deg, #11998e 0%, #38ef7d 100%);
-        }
-        
-        .btn-danger {
-            background: linear-gradient(135deg, #eb3349 0%, #f45c43 100%);
-        }
+        .btn-secondary { background: linear-gradient(135deg, #11998e 0%, #38ef7d 100%); }
+        .btn-danger { background: linear-gradient(135deg, #eb3349 0%, #f45c43 100%); }
+        .btn-blue { background: linear-gradient(135deg, #4285f4 0%, #34a853 100%); }
         
         .file-drop-zone {
             border: 3px dashed #4a4a6a;
             transition: all 0.3s ease;
         }
-        
         .file-drop-zone:hover, .file-drop-zone.dragover {
             border-color: #667eea;
             background: rgba(102, 126, 234, 0.1);
         }
         
-        .image-preview {
-            transition: all 0.3s ease;
-        }
+        .image-preview { transition: all 0.3s ease; }
+        .image-preview:hover { transform: scale(1.05); }
         
-        .image-preview:hover {
-            transform: scale(1.05);
-        }
-        
-        .sidebar-item {
-            transition: all 0.2s ease;
-        }
-        
+        .sidebar-item { transition: all 0.2s ease; }
         .sidebar-item:hover, .sidebar-item.active {
             background: rgba(102, 126, 234, 0.2);
             border-left: 3px solid #667eea;
@@ -89,19 +55,7 @@
             backdrop-filter: blur(5px);
         }
         
-        .status-badge {
-            animation: pulse 2s infinite;
-        }
-        
-        @keyframes pulse {
-            0%, 100% { opacity: 1; }
-            50% { opacity: 0.7; }
-        }
-        
-        .report-card {
-            transition: all 0.3s ease;
-        }
-        
+        .report-card { transition: all 0.3s ease; }
         .report-card:hover {
             transform: translateY(-5px);
             box-shadow: 0 20px 40px rgba(0, 0, 0, 0.3);
@@ -113,26 +67,17 @@
             animation: spin 1s linear infinite;
         }
         
-        @keyframes spin {
-            to { transform: rotate(360deg); }
-        }
+        @keyframes spin { to { transform: rotate(360deg); } }
+        @keyframes fadeIn { from { opacity: 0; transform: translateY(20px); } to { opacity: 1; transform: translateY(0); } }
+        @keyframes slideIn { from { transform: translateX(100%); opacity: 0; } to { transform: translateX(0); opacity: 1; } }
         
-        .fade-in {
-            animation: fadeIn 0.5s ease;
-        }
+        .fade-in { animation: fadeIn 0.5s ease; }
+        .toast { animation: slideIn 0.3s ease; }
         
-        @keyframes fadeIn {
-            from { opacity: 0; transform: translateY(20px); }
-            to { opacity: 1; transform: translateY(0); }
-        }
-        
-        .toast {
-            animation: slideIn 0.3s ease;
-        }
-        
-        @keyframes slideIn {
-            from { transform: translateX(100%); opacity: 0; }
-            to { transform: translateX(0); opacity: 1; }
+        /* Стили для отчёта при печати */
+        @media print {
+            body { background: white !important; }
+            .report-container { max-width: 100% !important; }
         }
     </style>
 </head>
@@ -140,7 +85,6 @@
     <div id="app" class="flex h-screen">
         <!-- Боковая панель -->
         <aside id="sidebar" class="w-72 bg-black/30 flex flex-col border-r border-white/10">
-            <!-- Логотип -->
             <div class="p-6 border-b border-white/10">
                 <div class="flex items-center gap-3">
                     <div class="w-12 h-12 rounded-xl bg-gradient-to-br from-purple-500 to-pink-500 flex items-center justify-center">
@@ -148,12 +92,11 @@
                     </div>
                     <div>
                         <h1 class="text-lg font-bold">Авто Отчёты</h1>
-                        <p class="text-xs text-gray-400">Генератор отчётов</p>
+                        <p class="text-xs text-gray-400">v2.0 • GPT + Gemini</p>
                     </div>
                 </div>
             </div>
             
-            <!-- Навигация -->
             <nav class="flex-1 overflow-y-auto p-4">
                 <div class="mb-6">
                     <button onclick="showPage('create')" class="sidebar-item active w-full text-left px-4 py-3 rounded-lg flex items-center gap-3" data-page="create">
@@ -163,7 +106,7 @@
                 </div>
                 
                 <div class="mb-4">
-                    <h3 class="text-xs text-gray-500 uppercase tracking-wider mb-2 px-4">История отчётов</h3>
+                    <h3 class="text-xs text-gray-500 uppercase tracking-wider mb-2 px-4">История</h3>
                     <button onclick="showPage('history')" class="sidebar-item w-full text-left px-4 py-3 rounded-lg flex items-center gap-3" data-page="history">
                         <i class="fas fa-history text-blue-400"></i>
                         <span>Все отчёты</span>
@@ -171,16 +114,12 @@
                     </button>
                 </div>
                 
-                <!-- Список автомобилей -->
                 <div class="mb-4">
                     <h3 class="text-xs text-gray-500 uppercase tracking-wider mb-2 px-4">Автомобили</h3>
-                    <div id="cars-list" class="space-y-1">
-                        <!-- Динамически заполняется -->
-                    </div>
+                    <div id="cars-list" class="space-y-1"></div>
                 </div>
             </nav>
             
-            <!-- Настройки -->
             <div class="p-4 border-t border-white/10">
                 <button onclick="showPage('settings')" class="sidebar-item w-full text-left px-4 py-3 rounded-lg flex items-center gap-3" data-page="settings">
                     <i class="fas fa-cog text-gray-400"></i>
@@ -195,7 +134,7 @@
             <div id="page-create" class="page p-8 fade-in">
                 <div class="max-w-5xl mx-auto">
                     <h2 class="text-3xl font-bold mb-2">Создать новый отчёт</h2>
-                    <p class="text-gray-400 mb-8">Загрузите скриншоты китайского отчёта об автомобиле</p>
+                    <p class="text-gray-400 mb-8">Загрузите скриншоты китайского отчёта об автомобиле (поддерживаются большие изображения)</p>
                     
                     <!-- Зона загрузки файлов -->
                     <div id="drop-zone" class="file-drop-zone rounded-2xl p-12 text-center mb-8 cursor-pointer"
@@ -205,7 +144,7 @@
                         </div>
                         <h3 class="text-xl font-semibold mb-2">Перетащите изображения сюда</h3>
                         <p class="text-gray-400 mb-4">или нажмите для выбора файлов</p>
-                        <p class="text-sm text-gray-500">Поддерживаются: JPG, PNG, GIF, WebP</p>
+                        <p class="text-sm text-gray-500">JPG, PNG, WebP • Большие изображения автоматически обрабатываются</p>
                     </div>
                     
                     <!-- Превью загруженных изображений -->
@@ -216,9 +155,7 @@
                                 <i class="fas fa-trash mr-1"></i> Очистить все
                             </button>
                         </div>
-                        <div id="images-grid" class="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-4">
-                            <!-- Изображения добавляются динамически -->
-                        </div>
+                        <div id="images-grid" class="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-4"></div>
                     </div>
                     
                     <!-- Кнопка генерации -->
@@ -249,16 +186,12 @@
                             <h2 class="text-3xl font-bold mb-2">История отчётов</h2>
                             <p class="text-gray-400">Все сгенерированные отчёты</p>
                         </div>
-                        <div class="flex gap-3">
-                            <input type="text" id="search-reports" placeholder="Поиск по VIN..." 
-                                   class="bg-black/30 border border-white/10 rounded-lg px-4 py-2 focus:outline-none focus:border-purple-500"
-                                   oninput="filterReports()">
-                        </div>
+                        <input type="text" id="search-reports" placeholder="Поиск по VIN..." 
+                               class="bg-black/30 border border-white/10 rounded-lg px-4 py-2 focus:outline-none focus:border-purple-500 w-64"
+                               oninput="filterReports()">
                     </div>
                     
-                    <div id="reports-list" class="space-y-4">
-                        <!-- Отчёты добавляются динамически -->
-                    </div>
+                    <div id="reports-list" class="space-y-4"></div>
                     
                     <div id="no-reports" class="hidden text-center py-16">
                         <i class="fas fa-folder-open text-6xl text-gray-600 mb-4"></i>
@@ -274,9 +207,7 @@
                     <button onclick="showPage('history')" class="text-gray-400 hover:text-white mb-6 flex items-center gap-2">
                         <i class="fas fa-arrow-left"></i> Назад к списку
                     </button>
-                    <div id="car-details">
-                        <!-- Детали автомобиля -->
-                    </div>
+                    <div id="car-details"></div>
                 </div>
             </div>
             
@@ -285,23 +216,21 @@
                 <div class="max-w-5xl mx-auto">
                     <div class="flex items-center justify-between mb-6">
                         <button onclick="showPage('history')" class="text-gray-400 hover:text-white flex items-center gap-2">
-                            <i class="fas fa-arrow-left"></i> Назад к списку
+                            <i class="fas fa-arrow-left"></i> Назад
                         </button>
                         <div class="flex gap-3">
-                            <button onclick="copyReportLink()" class="bg-blue-600 hover:bg-blue-700 px-4 py-2 rounded-lg flex items-center gap-2">
-                                <i class="fas fa-link"></i> Копировать ссылку
+                            <button onclick="exportToPDF()" class="bg-red-600 hover:bg-red-700 px-4 py-2 rounded-lg flex items-center gap-2" title="Скачать PDF">
+                                <i class="fas fa-file-pdf"></i> PDF
                             </button>
-                            <button onclick="openGoogleDoc()" class="bg-green-600 hover:bg-green-700 px-4 py-2 rounded-lg flex items-center gap-2">
+                            <button onclick="createGoogleDoc()" class="btn-blue px-4 py-2 rounded-lg flex items-center gap-2" title="Создать Google Doc">
                                 <i class="fab fa-google-drive"></i> Google Docs
                             </button>
-                            <button onclick="exportReport()" class="bg-purple-600 hover:bg-purple-700 px-4 py-2 rounded-lg flex items-center gap-2">
-                                <i class="fas fa-download"></i> Скачать
+                            <button onclick="exportReport()" class="bg-purple-600 hover:bg-purple-700 px-4 py-2 rounded-lg flex items-center gap-2" title="Скачать HTML">
+                                <i class="fas fa-download"></i> HTML
                             </button>
                         </div>
                     </div>
-                    <div id="report-content" class="card-gradient rounded-2xl p-8 prose prose-invert max-w-none">
-                        <!-- Содержимое отчёта -->
-                    </div>
+                    <div id="report-content" class="card-gradient rounded-2xl p-8 prose prose-invert max-w-none overflow-auto"></div>
                 </div>
             </div>
             
@@ -309,61 +238,107 @@
             <div id="page-settings" class="page hidden p-8 fade-in">
                 <div class="max-w-3xl mx-auto">
                     <h2 class="text-3xl font-bold mb-2">Настройки</h2>
-                    <p class="text-gray-400 mb-8">Конфигурация приложения</p>
+                    <p class="text-gray-400 mb-8">Конфигурация API и внешнего вида</p>
                     
                     <div class="space-y-6">
+                        <!-- Выбор AI провайдера -->
+                        <div class="card-gradient rounded-2xl p-6">
+                            <h3 class="text-lg font-semibold mb-4 flex items-center gap-2">
+                                <i class="fas fa-robot text-purple-400"></i>
+                                AI Провайдер
+                            </h3>
+                            <select id="ai-provider" class="w-full bg-black/30 border border-white/10 rounded-lg px-4 py-3 focus:outline-none focus:border-purple-500">
+                                <option value="openai">OpenAI GPT-4 Vision</option>
+                                <option value="gemini">Google Gemini 2.5 Flash</option>
+                            </select>
+                            <p class="text-xs text-gray-500 mt-2">Gemini быстрее и дешевле, GPT часто точнее</p>
+                        </div>
+                        
                         <!-- API ключ OpenAI -->
                         <div class="card-gradient rounded-2xl p-6">
                             <h3 class="text-lg font-semibold mb-4 flex items-center gap-2">
-                                <i class="fas fa-key text-yellow-400"></i>
-                                API ключ OpenAI
+                                <i class="fas fa-key text-green-400"></i>
+                                OpenAI API Key
                             </h3>
-                            <p class="text-gray-400 text-sm mb-4">Введите ваш API ключ OpenAI для работы с GPT-4 Vision</p>
-                            <input type="password" id="openai-key" placeholder="sk-..." 
-                                   class="w-full bg-black/30 border border-white/10 rounded-lg px-4 py-3 focus:outline-none focus:border-purple-500">
-                            <div class="mt-3 flex items-center gap-2">
-                                <button onclick="toggleKeyVisibility()" class="text-gray-400 hover:text-white text-sm">
-                                    <i class="fas fa-eye"></i> Показать
+                            <div class="relative">
+                                <input type="password" id="openai-key" placeholder="sk-..." 
+                                       class="w-full bg-black/30 border border-white/10 rounded-lg px-4 py-3 pr-20 focus:outline-none focus:border-purple-500">
+                                <button onclick="toggleKeyVisibility('openai-key')" class="absolute right-3 top-1/2 -translate-y-1/2 text-gray-400 hover:text-white">
+                                    <i class="fas fa-eye"></i>
                                 </button>
-                                <span class="text-gray-600">|</span>
-                                <a href="https://platform.openai.com/api-keys" target="_blank" class="text-purple-400 hover:text-purple-300 text-sm">
-                                    Получить ключ <i class="fas fa-external-link-alt ml-1"></i>
-                                </a>
                             </div>
+                            <a href="https://platform.openai.com/api-keys" target="_blank" class="text-purple-400 hover:text-purple-300 text-sm mt-2 inline-block">
+                                Получить ключ <i class="fas fa-external-link-alt ml-1"></i>
+                            </a>
                         </div>
                         
-                        <!-- Google Docs настройки -->
+                        <!-- API ключ Gemini -->
                         <div class="card-gradient rounded-2xl p-6">
                             <h3 class="text-lg font-semibold mb-4 flex items-center gap-2">
-                                <i class="fab fa-google-drive text-green-400"></i>
-                                Google Docs
+                                <i class="fas fa-key text-blue-400"></i>
+                                Google Gemini API Key
                             </h3>
-                            <p class="text-gray-400 text-sm mb-4">Настройки для экспорта в Google Docs</p>
-                            
-                            <div class="mb-4">
-                                <label class="block text-sm text-gray-400 mb-2">ID папки Google Drive (опционально)</label>
-                                <input type="text" id="google-folder-id" placeholder="Оставьте пустым для корневой папки" 
-                                       class="w-full bg-black/30 border border-white/10 rounded-lg px-4 py-3 focus:outline-none focus:border-purple-500">
+                            <div class="relative">
+                                <input type="password" id="gemini-key" placeholder="AIza..." 
+                                       class="w-full bg-black/30 border border-white/10 rounded-lg px-4 py-3 pr-20 focus:outline-none focus:border-purple-500">
+                                <button onclick="toggleKeyVisibility('gemini-key')" class="absolute right-3 top-1/2 -translate-y-1/2 text-gray-400 hover:text-white">
+                                    <i class="fas fa-eye"></i>
+                                </button>
                             </div>
-                            
-                            <p class="text-xs text-gray-500">
-                                <i class="fas fa-info-circle mr-1"></i>
-                                Отчёты будут открываться в Google Docs через копирование HTML-контента
-                            </p>
+                            <a href="https://aistudio.google.com/apikey" target="_blank" class="text-blue-400 hover:text-blue-300 text-sm mt-2 inline-block">
+                                Получить ключ (бесплатно) <i class="fas fa-external-link-alt ml-1"></i>
+                            </a>
                         </div>
                         
-                        <!-- URL логотипа -->
+                        <!-- Логотип -->
                         <div class="card-gradient rounded-2xl p-6">
                             <h3 class="text-lg font-semibold mb-4 flex items-center gap-2">
                                 <i class="fas fa-image text-pink-400"></i>
                                 Логотип для отчётов
                             </h3>
-                            <p class="text-gray-400 text-sm mb-4">URL изображения логотипа для отчётов</p>
-                            <input type="text" id="logo-url" placeholder="https://example.com/logo.png" 
-                                   class="w-full bg-black/30 border border-white/10 rounded-lg px-4 py-3 focus:outline-none focus:border-purple-500">
-                            <div id="logo-preview" class="mt-4 hidden">
-                                <img id="logo-img" src="" alt="Logo preview" class="max-h-20 rounded">
+                            <div class="flex gap-4 mb-4">
+                                <div class="flex-1">
+                                    <label class="block text-sm text-gray-400 mb-2">URL изображения</label>
+                                    <input type="text" id="logo-url" placeholder="https://..." 
+                                           class="w-full bg-black/30 border border-white/10 rounded-lg px-4 py-3 focus:outline-none focus:border-purple-500">
+                                </div>
+                                <div class="flex-shrink-0">
+                                    <label class="block text-sm text-gray-400 mb-2">Или загрузить</label>
+                                    <label class="cursor-pointer bg-purple-600 hover:bg-purple-700 px-4 py-3 rounded-lg inline-flex items-center gap-2">
+                                        <i class="fas fa-upload"></i>
+                                        <input type="file" accept="image/*" class="hidden" onchange="handleLogoUpload(event)">
+                                        Файл
+                                    </label>
+                                </div>
                             </div>
+                            <div id="logo-preview" class="hidden mt-4 p-4 bg-white rounded-lg">
+                                <img id="logo-img" src="" alt="Logo preview" class="max-h-16 object-contain">
+                            </div>
+                        </div>
+                        
+                        <!-- Google Docs API (опционально) -->
+                        <div class="card-gradient rounded-2xl p-6">
+                            <h3 class="text-lg font-semibold mb-4 flex items-center gap-2">
+                                <i class="fab fa-google text-yellow-400"></i>
+                                Google Docs API (опционально)
+                            </h3>
+                            <p class="text-gray-400 text-sm mb-4">Для автоматического создания Google Docs</p>
+                            <div class="space-y-4">
+                                <div>
+                                    <label class="block text-sm text-gray-400 mb-2">Google API Key</label>
+                                    <input type="password" id="google-api-key" placeholder="AIza..." 
+                                           class="w-full bg-black/30 border border-white/10 rounded-lg px-4 py-3 focus:outline-none focus:border-purple-500">
+                                </div>
+                                <div>
+                                    <label class="block text-sm text-gray-400 mb-2">Google Client ID</label>
+                                    <input type="text" id="google-client-id" placeholder="xxx.apps.googleusercontent.com" 
+                                           class="w-full bg-black/30 border border-white/10 rounded-lg px-4 py-3 focus:outline-none focus:border-purple-500">
+                                </div>
+                            </div>
+                            <p class="text-xs text-gray-500 mt-3">
+                                <i class="fas fa-info-circle mr-1"></i>
+                                Без API ключа текст будет скопирован для ручной вставки в Google Docs
+                            </p>
                         </div>
                         
                         <!-- Кнопка сохранения -->
@@ -387,8 +362,7 @@
     </div>
     
     <!-- Toast уведомления -->
-    <div id="toast-container" class="fixed bottom-4 right-4 space-y-2 z-50">
-    </div>
+    <div id="toast-container" class="fixed bottom-4 right-4 space-y-2 z-50"></div>
     
     <!-- Скрытый input для веб-версии -->
     <input type="file" id="file-input" multiple accept="image/*" class="hidden" onchange="handleFileSelect(event)">
