@@ -1,4 +1,5 @@
-import chromium from 'chrome-aws-lambda';
+import chromium from '@sparticuz/chromium';
+import puppeteer from 'puppeteer-core';
 
 export default async function handler(req, res) {
     if (req.method !== 'POST') {
@@ -16,11 +17,14 @@ export default async function handler(req, res) {
 
         console.log('Launching browser...');
         
-        browser = await chromium.puppeteer.launch({
-            args: chromium.args,
+        // Для production на Vercel
+        const executablePath = await chromium.executablePath();
+        
+        browser = await puppeteer.launch({
+            args: [...chromium.args, '--no-sandbox', '--disable-setuid-sandbox'],
             defaultViewport: chromium.defaultViewport,
-            executablePath: await chromium.executablePath,
-            headless: chromium.headless,
+            executablePath: executablePath,
+            headless: 'new',
             ignoreHTTPSErrors: true,
         });
 
