@@ -1438,27 +1438,49 @@ async function openDriveLink() {
             showToast('Загрузка в Google Drive...', 'info');
             
             const filename = `${sanitizeForFilename(appState.currentReport.vin)}_${formatDateForFile(appState.currentReport.createdAt)}.pdf`;
-            
-            // Загружаем напрямую через Google Drive API
-            const metadata = {
-                name: filename,
-                mimeType: 'application/pdf',
-                parents: ['18EZxRYhO94_U545EICtvtHCf7CeVzP0D']
-            };
-            
-            const form = new FormData();
-            form.append('metadata', new Blob([JSON.stringify(metadata)], { type: 'application/json' }));
-            
             const pdfBlob = base64ToBlob(pdfBase64, 'application/pdf');
-            form.append('file', pdfBlob);
             
-            const uploadResponse = await fetch('https://www.googleapis.com/upload/drive/v3/files?uploadType=multipart&fields=id,webViewLink', {
-                method: 'POST',
-                headers: {
-                    'Authorization': `Bearer ${accessToken}`
-                },
-                body: form
-            });
+            let uploadResponse;
+            
+            // Если файл уже существует на Drive - обновляем его
+            if (appState.currentReport.driveFileId) {
+                showToast('Обновление существующего файла...', 'info');
+                
+                const form = new FormData();
+                const metadata = {
+                    name: filename,
+                    mimeType: 'application/pdf'
+                };
+                form.append('metadata', new Blob([JSON.stringify(metadata)], { type: 'application/json' }));
+                form.append('file', pdfBlob);
+                
+                uploadResponse = await fetch(`https://www.googleapis.com/upload/drive/v3/files/${appState.currentReport.driveFileId}?uploadType=multipart&fields=id,webViewLink`, {
+                    method: 'PATCH',
+                    headers: {
+                        'Authorization': `Bearer ${accessToken}`
+                    },
+                    body: form
+                });
+            } else {
+                // Создаём новый файл
+                const metadata = {
+                    name: filename,
+                    mimeType: 'application/pdf',
+                    parents: ['18EZxRYhO94_U545EICtvtHCf7CeVzP0D']
+                };
+                
+                const form = new FormData();
+                form.append('metadata', new Blob([JSON.stringify(metadata)], { type: 'application/json' }));
+                form.append('file', pdfBlob);
+                
+                uploadResponse = await fetch('https://www.googleapis.com/upload/drive/v3/files?uploadType=multipart&fields=id,webViewLink', {
+                    method: 'POST',
+                    headers: {
+                        'Authorization': `Bearer ${accessToken}`
+                    },
+                    body: form
+                });
+            }
             
             if (!uploadResponse.ok) {
                 const errorText = await uploadResponse.text();

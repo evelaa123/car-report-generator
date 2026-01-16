@@ -33,13 +33,13 @@ export default async function handler(req, res) {
         const page = await browser.newPage();
         await page.setViewport({ width: 794, height: 1123 }); // A4 в пикселях
 
-        // Заменяем Unicode символы на HTML entities с цветом
+        // Заменяем Unicode символы на простой текст
         let processedHtml = htmlContent
-            .replace(/✓/g, '<span style="color: #10b981; font-weight: bold;">&#10003;</span>')
-            .replace(/✗/g, '<span style="color: #ef4444; font-weight: bold;">&#10007;</span>')
-            .replace(/★/g, '<span style="color: #f59e0b; font-weight: bold;">&#9733;</span>')
-            .replace(/⚠️/g, '<span style="color: #f59e0b; font-weight: bold;">&#9888;</span>')
-            .replace(/⚠/g, '<span style="color: #f59e0b; font-weight: bold;">&#9888;</span>');
+            .replace(/✓/g, '<span style="color: #10b981; font-weight: bold; font-size: 14px;">OK</span>')
+            .replace(/✗/g, '<span style="color: #ef4444; font-weight: bold; font-size: 14px;">NO</span>')
+            .replace(/★/g, '<span style="color: #f59e0b; font-weight: bold; font-size: 14px;">★</span>')
+            .replace(/⚠️/g, '<span style="color: #f59e0b; font-weight: bold; font-size: 14px;">!</span>')
+            .replace(/⚠/g, '<span style="color: #f59e0b; font-weight: bold; font-size: 14px;">!</span>');
 
         const fullHtml = `
 <!DOCTYPE html>
