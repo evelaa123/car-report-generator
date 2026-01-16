@@ -1,4 +1,4 @@
-import chromium from '@sparticuz/chromium';
+import chromium from 'chrome-aws-lambda';
 import puppeteer from 'puppeteer-core';
 
 export default async function handler(req, res) {
@@ -17,33 +17,13 @@ export default async function handler(req, res) {
 
         console.log('Launching browser...');
         
-        // Для локальной разработки используем локальный Chrome
-        const isLocal = process.env.VERCEL !== '1';
-        
-        if (isLocal) {
-            // Локальная разработка
-            browser = await puppeteer.launch({
-                headless: true,
-                args: ['--no-sandbox', '--disable-setuid-sandbox']
-            });
-        } else {
-            // Production на Vercel
-            browser = await puppeteer.launch({
-                args: [
-                    ...chromium.args,
-                    '--disable-gpu',
-                    '--disable-dev-shm-usage',
-                    '--disable-setuid-sandbox',
-                    '--no-first-run',
-                    '--no-sandbox',
-                    '--no-zygote',
-                    '--single-process'
-                ],
-                defaultViewport: chromium.defaultViewport,
-                executablePath: await chromium.executablePath(),
-                headless: chromium.headless,
-            });
-        }
+        browser = await puppeteer.launch({
+            args: chromium.args,
+            defaultViewport: chromium.defaultViewport,
+            executablePath: await chromium.executablePath,
+            headless: chromium.headless,
+            ignoreHTTPSErrors: true,
+        });
 
         const page = await browser.newPage();
 
