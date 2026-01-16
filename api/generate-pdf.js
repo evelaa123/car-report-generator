@@ -39,8 +39,6 @@ export default async function handler(req, res) {
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <style>
-        @import url('https://fonts.googleapis.com/css2?family=Noto+Sans:wght@400;600;700&display=swap');
-        
         * {
             margin: 0;
             padding: 0;
@@ -48,7 +46,7 @@ export default async function handler(req, res) {
         }
         
         body {
-            font-family: 'Noto Sans', 'Segoe UI', Arial, sans-serif;
+            font-family: 'DejaVu Sans', 'Arial Unicode MS', 'Segoe UI Symbol', 'Symbola', 'Noto Sans', Arial, sans-serif;
             color: #333;
             line-height: 1.6;
             padding: 20px;
@@ -97,8 +95,16 @@ export default async function handler(req, res) {
         console.log('Setting content...');
         await page.setContent(fullHtml, { waitUntil: 'networkidle0' });
         
-        console.log('Waiting for images...');
-        await new Promise(resolve => setTimeout(resolve, 1500));
+        console.log('Waiting for rendering...');
+        await new Promise(resolve => setTimeout(resolve, 2000));
+        
+        // Проверяем что Unicode символы отображаются
+        await page.evaluate(() => {
+            const testDiv = document.createElement('div');
+            testDiv.textContent = '✓ ✗ ★ ⚠';
+            testDiv.style.fontFamily = 'DejaVu Sans, Arial Unicode MS, Segoe UI Symbol';
+            document.body.appendChild(testDiv);
+        });
 
         console.log('Generating PDF...');
         const pdfBuffer = await page.pdf({
