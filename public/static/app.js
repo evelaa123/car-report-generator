@@ -628,50 +628,47 @@ async function toggleEditMode() {
             console.log('[Save] Auto-updating Drive file...');
             
             if (isElectron) {
-            showToast('Обновление PDF в Drive...', 'info');
-            
-            try {
-                const pdfFilename = `${sanitizeForFilename(appState.currentReport.vin)}_${appState.currentReport.type || 'technical'}_${formatDateForFile(appState.currentReport.createdAt)}.pdf`;
+                showToast('Обновление PDF в Drive...', 'info');
                 
-                const result = await ipcRenderer.invoke('update-pdf-in-drive', {
-                    fileId: appState.currentReport.driveFileId,
-                    htmlContent: appState.currentReport.htmlContent,
-                    filename: pdfFilename
-                });
-                
-                if (result.success) {
-                    showToast('PDF обновлён в Drive!', 'success');
-                } else {
-                    console.error('[Save] Drive update failed:', result.error);
-                }
-            } catch (error) {
-                console.error('[Save] Drive update error:', error);
-            }
-        } else if (!isElectron && appState.currentReport.driveFileId) {
-            // Веб версия - обновляем в фоне
-            uploadOrUpdateDriveFile().catch(error => {
-                console.error('[Save] Background Drive update failed:', error);
-            });
-                } else {
-                    // Если обновление не удалось - перезагружаем заново
-                    showToast('Загрузка нового PDF...', 'info');
+                try {
+                    const pdfFilename = `${sanitizeForFilename(appState.currentReport.vin)}_${appState.currentReport.type || 'technical'}_${formatDateForFile(appState.currentReport.createdAt)}.pdf`;
                     
-                    const uploadResult = await ipcRenderer.invoke('save-and-upload-pdf', {
+                    const result = await ipcRenderer.invoke('update-pdf-in-drive', {
+                        fileId: appState.currentReport.driveFileId,
                         htmlContent: appState.currentReport.htmlContent,
                         filename: pdfFilename
                     });
                     
-                    if (uploadResult.success && uploadResult.driveUrl) {
-                        appState.currentReport.driveUrl = uploadResult.driveUrl;
-                        appState.currentReport.driveFileId = uploadResult.driveFileId;
-                        appState.currentReport.localPdfPath = uploadResult.localPath;
-                        await saveData();
-                        showToast('Новый PDF загружен в Drive!', 'success');
+                    if (result.success) {
+                        showToast('PDF обновлён в Drive!', 'success');
+                    } else {
+                        console.error('[Save] Drive update failed:', result.error);
+                        
+                        // Если обновление не удалось - перезагружаем заново
+                        showToast('Загрузка нового PDF...', 'info');
+                        
+                        const uploadResult = await ipcRenderer.invoke('save-and-upload-pdf', {
+                            htmlContent: appState.currentReport.htmlContent,
+                            filename: pdfFilename
+                        });
+                        
+                        if (uploadResult.success && uploadResult.driveUrl) {
+                            appState.currentReport.driveUrl = uploadResult.driveUrl;
+                            appState.currentReport.driveFileId = uploadResult.driveFileId;
+                            appState.currentReport.localPdfPath = uploadResult.localPath;
+                            await saveData();
+                            showToast('Новый PDF загружен в Drive!', 'success');
+                        }
                     }
+                } catch (error) {
+                    console.error('[Save] Drive update error:', error);
+                    showToast('Ошибка обновления Drive: ' + error.message, 'error');
                 }
-            } catch (error) {
-                console.error('Drive update error:', error);
-                showToast('Ошибка обновления Drive: ' + error.message, 'error');
+            } else {
+                // Веб версия - обновляем в фоне
+                uploadOrUpdateDriveFile().catch(error => {
+                    console.error('[Save] Background Drive update failed:', error);
+                });
             }
         } else if (isElectron && appState.currentReport.localPdfPath) {
             // Есть локальный PDF но нет в Drive - обновляем локально
