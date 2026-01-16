@@ -280,7 +280,16 @@ function showPage(pageName) {
         page.classList.remove('hidden');
     }
     
+    // Обновить активность в сайдбаре
     document.querySelectorAll('.sidebar-item').forEach(item => {
+        item.classList.remove('active');
+        if (item.dataset.page === pageName) {
+            item.classList.add('active');
+        }
+    });
+    
+    // Обновить активность в мобильной навигации
+    document.querySelectorAll('.bottom-nav-item').forEach(item => {
         item.classList.remove('active');
         if (item.dataset.page === pageName) {
             item.classList.add('active');

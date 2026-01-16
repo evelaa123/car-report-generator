@@ -37,7 +37,10 @@ export default async function handler(req, res) {
 <html lang="ru">
 <head>
     <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <style>
+        @import url('https://fonts.googleapis.com/css2?family=Noto+Sans:wght@400;600;700&display=swap');
+        
         * {
             margin: 0;
             padding: 0;
@@ -45,7 +48,7 @@ export default async function handler(req, res) {
         }
         
         body {
-            font-family: "Segoe UI", Arial, sans-serif;
+            font-family: 'Noto Sans', 'Segoe UI', Arial, sans-serif;
             color: #333;
             line-height: 1.6;
             padding: 20px;
@@ -63,9 +66,9 @@ export default async function handler(req, res) {
             font-size: 12px;
         }
         
-        h1 { font-size: 24px; margin: 10px 0; }
-        h2 { font-size: 18px; margin: 8px 0; }
-        h3 { font-size: 14px; margin: 6px 0; }
+        h1 { font-size: 24px; margin: 10px 0; font-weight: 700; }
+        h2 { font-size: 18px; margin: 8px 0; font-weight: 600; }
+        h3 { font-size: 14px; margin: 6px 0; font-weight: 600; }
         
         table {
             width: 100%;
