@@ -29,11 +29,15 @@
       "target": [
         {
           "target": "nsis",
-          "arch": ["x64"]
+          "arch": [
+            "x64"
+          ]
         },
         {
           "target": "portable",
-          "arch": ["x64"]
+          "arch": [
+            "x64"
+          ]
         }
       ],
       "icon": "public/icon.ico"
@@ -41,7 +45,9 @@
     "nsis": {
       "oneClick": false,
       "allowToChangeInstallationDirectory": true,
-      "installerLanguages": ["ru"],
+      "installerLanguages": [
+        "ru"
+      ],
       "language": "1049",
       "installerIcon": "public/icon.ico",
       "uninstallerIcon": "public/icon.ico"
@@ -52,8 +58,12 @@
   },
   "dependencies": {
     "@getstation/electron-google-oauth2": "^14.0.0",
+    "global-agent": "^3.0.0",
+    "global-tunnel-ng": "^2.7.1",
     "googleapis": "^126.0.0",
-    "node-fetch": "^2.7.0"
+    "https-proxy-agent": "^7.0.6",
+    "node-fetch": "^2.7.0",
+    "proxy-agent": "^6.5.0"
   },
   "devDependencies": {
     "concurrently": "^9.0.0",
