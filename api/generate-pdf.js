@@ -1,4 +1,4 @@
-import chromium from '@sparticuz/chromium';
+import chromium from '@sparticuz/chromium-min';
 import puppeteer from 'puppeteer-core';
 
 export default async function handler(req, res) {
@@ -17,14 +17,16 @@ export default async function handler(req, res) {
 
         console.log('Launching browser...');
         
-        // Для production на Vercel
-        const executablePath = await chromium.executablePath();
+        // Используем удаленный Chromium для Vercel
+        const executablePath = await chromium.executablePath(
+            'https://github.com/Sparticuz/chromium/releases/download/v131.0.0/chromium-v131.0.0-pack.tar'
+        );
         
         browser = await puppeteer.launch({
-            args: [...chromium.args, '--no-sandbox', '--disable-setuid-sandbox'],
-            defaultViewport: chromium.defaultViewport,
+            args: chromium.args,
             executablePath: executablePath,
-            headless: 'new',
+            defaultViewport: null,
+            headless: true,
             ignoreHTTPSErrors: true,
         });
 
