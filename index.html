@@ -221,15 +221,25 @@
                     </div>
 <!-- Параметры отчёта -->
 <div id="report-options" class="hidden mb-6 card-gradient rounded-xl p-6">
-    <h3 class="text-lg font-semibold mb-4">Параметры генерации</h3>
+    <h3 class="text-lg font-semibold mb-4">Выбор тарифа</h3>
     
-    <label class="flex items-center gap-3 cursor-pointer">
-        <input type="checkbox" id="split-reports" class="w-5 h-5 rounded border-white/20 bg-black/30 text-purple-600 focus:ring-purple-500">
-        <div>
-            <span class="font-semibold">Разделить на два отчёта</span>
-            <p class="text-sm text-gray-400">Создать отдельно технический (полный) и страховой (краткий) отчёты</p>
-        </div>
-    </label>
+    <div class="space-y-3">
+        <label class="flex items-center gap-3 cursor-pointer p-3 rounded-lg hover:bg-white/5 transition">
+            <input type="radio" name="report-tariff" value="full" id="tariff-full" checked class="w-5 h-5 border-white/20 bg-black/30 text-purple-600 focus:ring-purple-500">
+            <div>
+                <span class="font-semibold">Полный отчет</span>
+                <p class="text-sm text-gray-400">Техническое состояние + страховые случаи</p>
+            </div>
+        </label>
+        
+        <label class="flex items-center gap-3 cursor-pointer p-3 rounded-lg hover:bg-white/5 transition">
+            <input type="radio" name="report-tariff" value="short" id="tariff-short" class="w-5 h-5 border-white/20 bg-black/30 text-purple-600 focus:ring-purple-500">
+            <div>
+                <span class="font-semibold">Короткий отчет</span>
+                <p class="text-sm text-gray-400">Только техническое обслуживание (без страховых случаев)</p>
+            </div>
+        </label>
+    </div>
 </div>
 
                     <!-- Превью загруженных изображений -->

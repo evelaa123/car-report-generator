@@ -568,7 +568,7 @@ function renderReportContent(report) {
     const container = document.getElementById('report-content');
     if (!container) return;
     
-    const typeLabel = report.type === 'insurance' ? 'Страховой отчёт' : 'Технический отчёт';
+    const typeLabel = report.type === 'full' ? 'Полный отчёт' : 'Короткий отчёт';
     const isEditing = container.getAttribute('data-editing') === 'true';
     
     container.innerHTML = `
@@ -576,8 +576,8 @@ function renderReportContent(report) {
         <div class="flex items-center justify-between mb-6 p-4 bg-black/30 rounded-xl">
             <div class="flex items-center gap-3">
                 <span class="text-sm text-gray-400">${typeLabel}</span>
-                ${report.type ? `<span class="text-xs px-2 py-1 rounded ${report.type === 'insurance' ? 'bg-orange-600' : 'bg-purple-600'}">
-                    <i class="fas ${report.type === 'insurance' ? 'fa-file-invoice' : 'fa-file-alt'}"></i>
+                ${report.type ? `<span class="text-xs px-2 py-1 rounded ${report.type === 'full' ? 'bg-purple-600' : 'bg-blue-600'}">
+                    <i class="fas ${report.type === 'full' ? 'fa-file-alt' : 'fa-file-invoice'}"></i>
                 </span>` : ''}
             </div>
             
@@ -1067,78 +1067,36 @@ async function generateReport() {
         // Создание отчётов
 updateProgress('Создание отчётов...', 80);
 
-const splitReports = document.getElementById('split-reports').checked;
+const tariff = document.querySelector('input[name="report-tariff"]:checked')?.value || 'full';
 const reports = [];
 
-if (splitReports) {
-    // Технический отчёт (полный)
-    const htmlContentTechnical = generateHTMLReport(reportData);
-    reports.push({
-        id: Date.now().toString(),
-        type: 'technical',
-        createdAt: new Date().toISOString(),
-        vin: reportData.vin || 'Неизвестно',
-        brand: reportData.brand || 'Неизвестно',
-        model: reportData.model || 'Неизвестно',
-        rating: reportData.rating || null,
-        mileage: reportData.lastMileage || null,
-        data: reportData,
-        htmlContent: htmlContentTechnical,
-        driveUrl: null,
-        driveFileId: null,
-        localPdfPath: null,
-        aiProvider: provider,
-        images: appState.images.slice(0, 3).map(i => ({ name: i.name }))
-    });
-    
-    // Страховой отчёт (краткий)
-    const htmlContentInsurance = generateInsuranceReport(reportData);
-    reports.push({
-        id: (Date.now() + 1).toString(),
-        type: 'insurance',
-        createdAt: new Date().toISOString(),
-        vin: reportData.vin || 'Неизвестно',
-        brand: reportData.brand || 'Неизвестно',
-        model: reportData.model || 'Неизвестно',
-        rating: reportData.rating || null,
-        mileage: reportData.lastMileage || null,
-        data: reportData,
-        htmlContent: htmlContentInsurance,
-        driveUrl: null,
-        driveFileId: null,
-        localPdfPath: null,
-        aiProvider: provider,
-        images: appState.images.slice(0, 3).map(i => ({ name: i.name }))
-    });
-} else {
-    // Один технический отчёт
-    const htmlContent = generateHTMLReport(reportData);
-    reports.push({
-        id: Date.now().toString(),
-        type: 'technical',
-        createdAt: new Date().toISOString(),
-        vin: reportData.vin || 'Неизвестно',
-        brand: reportData.brand || 'Неизвестно',
-        model: reportData.model || 'Неизвестно',
-        rating: reportData.rating || null,
-        mileage: reportData.lastMileage || null,
-        data: reportData,
-        htmlContent: htmlContent,
-        driveUrl: null,
-        driveFileId: null,
-        localPdfPath: null,
-        aiProvider: provider,
-        images: appState.images.slice(0, 3).map(i => ({ name: i.name }))
-    });
-}
+// Один отчёт в зависимости от тарифа
+const htmlContent = generateHTMLReport(reportData, tariff);
+reports.push({
+    id: Date.now().toString(),
+    type: tariff === 'full' ? 'full' : 'short',
+    createdAt: new Date().toISOString(),
+    vin: reportData.vin || 'Неизвестно',
+    brand: reportData.brand || 'Неизвестно',
+    model: reportData.model || 'Неизвестно',
+    rating: reportData.rating || null,
+    mileage: reportData.lastMileage || null,
+    data: reportData,
+    htmlContent: htmlContent,
+    driveUrl: null,
+    driveFileId: null,
+    localPdfPath: null,
+    aiProvider: provider,
+    images: appState.images.slice(0, 3).map(i => ({ name: i.name }))
+});
 
-const report = reports[0]; // Для обратной совместимости с кодом ниже
+const report = reports[0];
 
 // --- АВТОСОХРАНЕНИЕ PDF + GOOGLE DRIVE ---
 if (isElectron) {
     for (let i = 0; i < reports.length; i++) {
         const rep = reports[i];
-        const reportType = rep.type === 'technical' ? 'Технический' : 'Страховой';
+        const reportType = rep.type === 'full' ? 'Полный' : 'Короткий';
         
         updateProgress(`Сохранение ${reportType} PDF (${i+1}/${reports.length})...`, 85 + (i * 5));
         
@@ -1201,10 +1159,13 @@ setTimeout(() => {
 }
 
 function getSystemPrompt() {
-    return `Ты — эксперт по анализу автомобилей. Проанализируй фотографии из истории обслуживания автомобиля и создай детальный отчёт в формате JSON.
+    return `Ты — эксперт по анализу автомобилей. Проанализируй фотографии из истории обслуживания автомобиля и создай МАКСИМАЛЬНО ДЕТАЛЬНЫЙ отчёт в формате JSON.
 
-ВАЖНО: Отчёт должен быть максимально подробным и информативным.
-ИТОГ БЕЗ КИТАЙСКИХ СИМВОЛОВ.
+ВАЖНО: 
+- Отчёт должен содержать ВСЮ возможную информацию
+- Особое внимание к ДЕТАЛЬНЫМ данным по КАЖДОМУ ДТП/страховому случаю
+- Перечисляй ВСЕ замененные детали и ремонтные работы
+- ИТОГ БЕЗ КИТАЙСКИХ СИМВОЛОВ
 Формат JSON (строго соблюдай структуру):
 
 {
@@ -1266,6 +1227,38 @@ function getSystemPrompt() {
   "frameCheck": {
     "bodyFrame": "Не обнаружено аномалий",
     "reinforcedElements": "Не обнаружено аномалий"
+  },
+  
+  "structuralElements": {
+    "pillarA": {"status": "ok", "note": ""},
+    "pillarB": {"status": "ok", "note": ""},
+    "pillarC": {"status": "ok", "note": ""},
+    "frontLongeron": {"status": "ok", "note": ""},
+    "rearLongeron": {"status": "ok", "note": ""},
+    "frontPanel": {"status": "ok", "note": ""},
+    "rearPanel": {"status": "ok", "note": ""},
+    "firewall": {"status": "ok", "note": ""},
+    "shockMounts": {"status": "ok", "note": ""},
+    "floor": {"status": "ok", "note": ""},
+    "leftSide": {"status": "ok", "note": ""},
+    "rightSide": {"status": "problem", "note": "Есть отметки"}
+  },
+  
+  "bodyParts": {
+    "leftFrontDoor": {"status": "ok", "note": ""},
+    "leftRearDoor": {"status": "ok", "note": ""},
+    "leftFrontFender": {"status": "ok", "note": ""},
+    "leftRearFender": {"status": "ok", "note": ""},
+    "rightFrontDoor": {"status": "problem", "note": "Обнаружены отметки"},
+    "rightRearDoor": {"status": "problem", "note": "Обнаружены отметки"},
+    "rightFrontFender": {"status": "problem", "note": "Обнаружены отметки"},
+    "hood": {"status": "ok", "note": ""},
+    "trunk": {"status": "ok", "note": ""},
+    "roof": {"status": "ok", "note": ""},
+    "sills": {"status": "ok", "note": ""},
+    "windshield": {"status": "ok", "note": ""},
+    "frontBumper": {"status": "problem", "note": "Обнаружены отметки"},
+    "rearBumper": {"status": "problem", "note": "Обнаружены отметки"}
   },
   
   "mileageHistory": [
@@ -1341,6 +1334,63 @@ function getSystemPrompt() {
     "maxDamage": "0 ₽",
     "risks": "Нет особых рекомендаций"
   },
+  
+  "insuranceHistory": [
+    {
+      "date": "2021 Q2",
+      "type": "ДТП",
+      "damageAmount": "15000 юаней",
+      "status": "Закрыто",
+      "recordsCount": 16,
+      "works": [
+        {"part": "Крепёж переднего бампера", "action": "замена", "quantity": 2},
+        {"part": "Нижняя решётка переднего бампера", "action": "замена", "quantity": 1},
+        {"part": "Декоративная накладка переднего бампера", "action": "замена", "quantity": 1},
+        {"part": "Воздуховод", "action": "замена", "quantity": 1},
+        {"part": "Усилитель решётки переднего бампера", "action": "замена", "quantity": 1},
+        {"part": "Внутренняя панель правого переднего крыла", "action": "замена", "quantity": 1},
+        {"part": "Каркас правого переднего крыла", "action": "замена", "quantity": 1},
+        {"part": "Кронштейн крепления переднего радара", "action": "замена", "quantity": 1},
+        {"part": "Верхний кронштейн центральной решётки", "action": "замена", "quantity": 1},
+        {"part": "Крепление переднего бампера (правое)", "action": "замена", "quantity": 1},
+        {"part": "Защитный кожух буксировочного крюка", "action": "замена", "quantity": 1},
+        {"part": "Кожух переднего бампера", "action": "замена", "quantity": 1},
+        {"part": "Правое переднее крыло", "action": "ремонт", "quantity": 2},
+        {"part": "Правая передняя фара", "action": "ремонт", "quantity": 1},
+        {"part": "Каркас переднего бампера", "action": "ремонт", "quantity": 2},
+        {"part": "Внешняя накладка переднего бампера", "action": "ремонт", "quantity": 2}
+      ]
+    },
+    {
+      "date": "2023 Q1",
+      "type": "ДТП",
+      "damageAmount": "2000 юаней",
+      "status": "Закрыто",
+      "recordsCount": 7,
+      "works": [
+        {"part": "Правая задняя дверь", "action": "окраска", "quantity": 1},
+        {"part": "Правая боковина", "action": "окраска", "quantity": 1},
+        {"part": "Правая задняя дверь", "action": "рихтовка", "quantity": 1},
+        {"part": "Задний бампер", "action": "окраска", "quantity": 1},
+        {"part": "Внешняя панель каркаса кузова справа", "action": "рихтовка", "quantity": 1},
+        {"part": "Правая передняя дверь", "action": "окраска", "quantity": 1},
+        {"part": "Правый задний литой диск", "action": "ремонт", "quantity": 1}
+      ]
+    },
+    {
+      "date": "2023 Q3",
+      "type": "Прочее",
+      "damageAmount": "2000 юаней",
+      "status": "Закрыто",
+      "recordsCount": 5,
+      "works": [
+        {"part": "Передний бампер", "action": "замена", "quantity": 1},
+        {"part": "Левая декоративная решётка переднего бампера", "action": "замена", "quantity": 1},
+        {"part": "Левая передняя шина", "action": "замена", "quantity": 1},
+        {"part": "Внешняя панель правого переднего крыла", "action": "замена", "quantity": 1}
+      ]
+    }
+  ],
   
   "conclusion": {
     "accidents": "Не зафиксировано",
@@ -1758,7 +1808,7 @@ function updateProgress(status, percent) {
 // Генерация HTML отчёта
 // ============================================
 
-function generateHTMLReport(data) {
+function generateHTMLReport(data, tariff = 'full') {
     const logoSrc = appState.settings.logoBase64 || appState.settings.logoUrl || '';
     
     return `
@@ -1767,7 +1817,7 @@ function generateHTMLReport(data) {
     <!-- Шапка с логотипом -->
     <div style="display: flex; justify-content: space-between; align-items: flex-start; margin-bottom: 30px; padding-bottom: 20px; border-bottom: 3px solid #4a4a8a;">
         <div>
-            <h1 style="font-size: 26px; font-weight: bold; color: #2a2a5a; margin: 0;">Экспертный отчёт об автомобиле</h1>
+            <h1 style="font-size: 26px; font-weight: bold; color: #2a2a5a; margin: 0;">Экспертный отчёт об автомобиле${tariff === 'full' ? '' : ' (краткий)'}</h1>
             <p style="font-size: 16px; color: #666; margin-top: 5px;">Отчёт об истории автомобиля</p>
         </div>
         ${logoSrc ? `<img src="${logoSrc}" alt="Logo" style="max-height: 70px; max-width: 180px; object-fit: contain;">` : ''}
@@ -1925,6 +1975,52 @@ ${data.frameCheck ? `
 </div>
 ` : ''}
 
+<!-- 2.7. Детальная проверка силовой структуры кузова -->
+${data.structuralElements ? `
+<div style="margin-bottom: 25px; background: #f8f9fa; border-radius: 12px; padding: 20px;">
+    <h2 style="font-size: 18px; font-weight: bold; color: #2a2a5a; margin: 0 0 15px 0; padding-bottom: 10px; border-bottom: 2px solid #e0e0e0;">Проверка ДТП и силовой структуры</h2>
+    <h3 style="font-size: 14px; color: #666; margin-bottom: 10px;">Проверенные элементы</h3>
+    
+    <div style="display: grid; grid-template-columns: repeat(3, 1fr); gap: 10px;">
+        ${generateStructuralElement('Стойка A', data.structuralElements.pillarA)}
+        ${generateStructuralElement('Стойка B', data.structuralElements.pillarB)}
+        ${generateStructuralElement('Стойка C', data.structuralElements.pillarC)}
+        ${generateStructuralElement('Передний лонжерон', data.structuralElements.frontLongeron)}
+        ${generateStructuralElement('Задний лонжерон', data.structuralElements.rearLongeron)}
+        ${generateStructuralElement('Передняя панель', data.structuralElements.frontPanel)}
+        ${generateStructuralElement('Задняя панель', data.structuralElements.rearPanel)}
+        ${generateStructuralElement('Противопожарная перегородка', data.structuralElements.firewall)}
+        ${generateStructuralElement('Крепления амортизаторов', data.structuralElements.shockMounts)}
+        ${generateStructuralElement('Днище автомобиля', data.structuralElements.floor)}
+        ${generateStructuralElement('Левая боковина', data.structuralElements.leftSide)}
+        ${generateStructuralElement('Правая боковина', data.structuralElements.rightSide)}
+    </div>
+</div>
+` : ''}
+
+<!-- 2.8. Кузов и внешний вид -->
+${data.bodyParts ? `
+<div style="margin-bottom: 25px; background: #f8f9fa; border-radius: 12px; padding: 20px;">
+    <h2 style="font-size: 18px; font-weight: bold; color: #2a2a5a; margin: 0 0 15px 0; padding-bottom: 10px; border-bottom: 2px solid #e0e0e0;">Кузов и внешний вид</h2>
+    
+    <div style="display: grid; grid-template-columns: repeat(3, 1fr); gap: 10px;">
+        ${generateBodyPartElement('Левая передняя дверь', data.bodyParts.leftFrontDoor)}
+        ${generateBodyPartElement('Левая задняя дверь', data.bodyParts.leftRearDoor)}
+        ${generateBodyPartElement('Левое переднее крыло', data.bodyParts.leftFrontFender)}
+        ${generateBodyPartElement('Левое заднее крыло', data.bodyParts.leftRearFender)}
+        ${generateBodyPartElement('Правая передняя дверь', data.bodyParts.rightFrontDoor)}
+        ${generateBodyPartElement('Правая задняя дверь', data.bodyParts.rightRearDoor)}
+        ${generateBodyPartElement('Правое переднее крыло', data.bodyParts.rightFrontFender)}
+        ${generateBodyPartElement('Капот', data.bodyParts.hood)}
+        ${generateBodyPartElement('Крышка багажника', data.bodyParts.trunk)}
+        ${generateBodyPartElement('Крыша', data.bodyParts.roof)}
+        ${generateBodyPartElement('Пороги', data.bodyParts.sills)}
+        ${generateBodyPartElement('Лобовое стекло', data.bodyParts.windshield)}
+        ${generateBodyPartElement('Передний бампер', data.bodyParts.frontBumper)}
+        ${generateBodyPartElement('Задний бампер', data.bodyParts.rearBumper)}
+    </div>
+</div>
+` : ''}
 
     <!-- 3. История пробега -->
 ${data.mileageHistory && data.mileageHistory.length > 0 ? `
@@ -2105,6 +2201,104 @@ ${data.serviceHistory && data.serviceHistory.records && data.serviceHistory.reco
         
     </div>
 </div>
+
+${tariff === 'full' && data.insuranceHistory && data.insuranceHistory.length > 0 ? generateInsuranceBlock(data) : ''}
+
+</div>
+`;
+}
+
+// Генерация блока страховых случаев (для полного отчета)
+function generateInsuranceBlock(data) {
+    if (!data.insuranceHistory || data.insuranceHistory.length === 0) return '';
+    
+    return `
+<div style="page-break-before: always; margin-top: 40px; padding-top: 30px; border-top: 3px solid #4a4a8a;">
+    <h1 style="font-size: 24px; font-weight: bold; color: #2a2a5a; margin: 0 0 20px 0;">БЛОК 2: СТРАХОВЫЕ СЛУЧАИ</h1>
+    
+    <!-- Общая информация -->
+    ${data.insuranceInfo ? `
+    <div style="margin-bottom: 25px; background: #f8f9fa; border-radius: 12px; padding: 20px;">
+        <h2 style="font-size: 18px; font-weight: bold; color: #2a2a5a; margin: 0 0 15px 0; padding-bottom: 10px; border-bottom: 2px solid #e0e0e0;">Общие данные по страховым случаям</h2>
+        <div style="display: grid; grid-template-columns: repeat(3, 1fr); gap: 15px;">
+            <div style="background: white; padding: 15px; border-radius: 8px; text-align: center;">
+                <span style="font-size: 11px; color: #888; text-transform: uppercase;">Закрытых случаев</span>
+                <p style="font-size: 20px; font-weight: bold; color: #333; margin: 5px 0 0 0;">${data.insuranceInfo.claims || 0}</p>
+            </div>
+            <div style="background: white; padding: 15px; border-radius: 8px; text-align: center;">
+                <span style="font-size: 11px; color: #888; text-transform: uppercase;">ДТП с третьими лицами</span>
+                <p style="font-size: 20px; font-weight: bold; color: #333; margin: 5px 0 0 0;">${data.insuranceInfo.thirdPartyIncidents || 0}</p>
+            </div>
+            <div style="background: white; padding: 15px; border-radius: 8px; text-align: center;">
+                <span style="font-size: 11px; color: #888; text-transform: uppercase;">Макс. ущерб</span>
+                <p style="font-size: 20px; font-weight: bold; color: #dc3545; margin: 5px 0 0 0;">${data.insuranceInfo.maxDamage || '0 ₽'}</p>
+            </div>
+        </div>
+        ${data.insuranceInfo.risks ? `
+        <div style="margin-top: 15px; padding: 15px; background: #e8f5e9; border-radius: 8px;">
+            <strong>Рекомендации по осмотру:</strong> ${data.insuranceInfo.risks}
+        </div>
+        ` : ''}
+    </div>
+    ` : ''}
+    
+    <!-- Детализация каждого ДТП -->
+    ${data.insuranceHistory.map((incident, index) => `
+    <div style="page-break-inside: avoid; margin-bottom: 25px; background: #fff3cd; border-radius: 12px; padding: 20px; border-left: 5px solid #ffc107;">
+        <h3 style="font-size: 16px; font-weight: bold; color: #856404; margin: 0 0 15px 0;">ДТП #${index + 1} — ${incident.date}</h3>
+        
+        <div style="display: grid; grid-template-columns: repeat(4, 1fr); gap: 15px; margin-bottom: 15px;">
+            <div style="background: white; padding: 10px; border-radius: 8px;">
+                <span style="font-size: 10px; color: #888; text-transform: uppercase;">Тип</span>
+                <p style="font-size: 13px; font-weight: 600; margin: 3px 0 0 0;">${incident.type}</p>
+            </div>
+            <div style="background: white; padding: 10px; border-radius: 8px;">
+                <span style="font-size: 10px; color: #888; text-transform: uppercase;">Сумма ущерба</span>
+                <p style="font-size: 13px; font-weight: 600; color: #dc3545; margin: 3px 0 0 0;">${incident.damageAmount}</p>
+            </div>
+            <div style="background: white; padding: 10px; border-radius: 8px;">
+                <span style="font-size: 10px; color: #888; text-transform: uppercase;">Статус</span>
+                <p style="font-size: 13px; font-weight: 600; color: #28a745; margin: 3px 0 0 0;">${incident.status}</p>
+            </div>
+            <div style="background: white; padding: 10px; border-radius: 8px;">
+                <span style="font-size: 10px; color: #888; text-transform: uppercase;">Записей</span>
+                <p style="font-size: 13px; font-weight: 600; margin: 3px 0 0 0;">${incident.recordsCount}</p>
+            </div>
+        </div>
+        
+        ${incident.works && incident.works.length > 0 ? `
+        <div style="background: white; padding: 15px; border-radius: 8px;">
+            <h4 style="font-size: 14px; font-weight: bold; color: #333; margin: 0 0 10px 0;">Работы и замены:</h4>
+            <table style="width: 100%; border-collapse: collapse; font-size: 11px;">
+                <thead>
+                    <tr style="background: #f8f9fa;">
+                        <th style="padding: 8px; text-align: left; border-bottom: 2px solid #e0e0e0;">Деталь</th>
+                        <th style="padding: 8px; text-align: center; border-bottom: 2px solid #e0e0e0;">Действие</th>
+                        <th style="padding: 8px; text-align: center; border-bottom: 2px solid #e0e0e0;">Кол-во</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    ${incident.works.map(work => `
+                    <tr style="border-bottom: 1px solid #e0e0e0;">
+                        <td style="padding: 8px;">${work.part}</td>
+                        <td style="padding: 8px; text-align: center;">
+                            <span style="display: inline-block; padding: 3px 8px; border-radius: 4px; font-size: 10px; font-weight: 600; 
+                                background: ${work.action === 'замена' ? '#fff3cd' : '#d4edda'}; 
+                                color: ${work.action === 'замена' ? '#856404' : '#155724'};">
+                                ${work.action}
+                            </span>
+                        </td>
+                        <td style="padding: 8px; text-align: center;">${work.quantity || 1}</td>
+                    </tr>
+                    `).join('')}
+                </tbody>
+            </table>
+        </div>
+        ` : ''}
+    </div>
+    `).join('')}
+    
+</div>
 `;
 }
 
@@ -2148,6 +2342,33 @@ function generateInsuranceReport(data) {
 </div>`;
 }
 
+
+function generateStructuralElement(name, element) {
+    if (!element) return '';
+    const isOk = !element || element.status === 'ok' || !element.status;
+    return `
+    <div style="background: ${isOk ? '#d4edda' : '#f8d7da'}; border-radius: 8px; padding: 10px; text-align: center; font-size: 11px;">
+        <div style="font-weight: bold; margin-bottom: 5px; color: ${isOk ? '#28a745' : '#dc3545'};">
+            ${isOk ? '✓' : '✗'} ${name}
+        </div>
+        ${element.note ? `<div style="color: #666; font-size: 10px;">${element.note}</div>` : ''}
+    </div>
+    `;
+}
+
+function generateBodyPartElement(name, part) {
+    if (!part) return '';
+    const isOk = !part || part.status === 'ok' || !part.status;
+    return `
+    <div style="background: ${isOk ? '#ffffff' : '#fff3cd'}; border: 2px solid ${isOk ? '#d4edda' : '#ffc107'}; border-radius: 8px; padding: 10px; text-align: center; font-size: 11px;">
+        <div style="font-weight: bold; margin-bottom: 5px; color: ${isOk ? '#28a745' : '#856404'};">
+            ${isOk ? 'Без отклонений' : 'Обнаружены отметки'}
+        </div>
+        <div style="color: #333; font-size: 10px;">${name}</div>
+        ${part.note ? `<div style="color: #666; font-size: 9px; margin-top: 3px;">${part.note}</div>` : ''}
+    </div>
+    `;
+}
 
 function generateComponentHTML(name, component) {
     const isOk = !component || component.status === 'ok' || !component.status;
