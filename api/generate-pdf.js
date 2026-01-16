@@ -1,5 +1,4 @@
 import chromium from 'chrome-aws-lambda';
-import puppeteer from 'puppeteer-core';
 
 export default async function handler(req, res) {
     if (req.method !== 'POST') {
@@ -17,7 +16,7 @@ export default async function handler(req, res) {
 
         console.log('Launching browser...');
         
-        browser = await puppeteer.launch({
+        browser = await chromium.puppeteer.launch({
             args: chromium.args,
             defaultViewport: chromium.defaultViewport,
             executablePath: await chromium.executablePath,
