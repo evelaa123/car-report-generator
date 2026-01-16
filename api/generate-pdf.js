@@ -107,8 +107,15 @@ export default async function handler(req, res) {
         });
 
         console.log('Generating PDF...');
+        
+        // Получаем высоту контента
+        const contentHeight = await page.evaluate(() => {
+            return document.documentElement.scrollHeight;
+        });
+        
         const pdfBuffer = await page.pdf({
-            format: 'A4',
+            width: '210mm',
+            height: `${contentHeight}px`,
             printBackground: true,
             margin: {
                 top: '0mm',
