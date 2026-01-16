@@ -31,11 +31,7 @@ export default async function handler(req, res) {
         });
 
         const page = await browser.newPage();
-        await page.setViewport({ 
-            width: 1587, // A4 ширина в пикселях при 2x scale (794 * 2)
-            height: 2245, // A4 высота при 2x scale (1123 * 2)
-            deviceScaleFactor: 2 // Увеличиваем разрешение для четкости
-        });
+        await page.setViewport({ width: 794, height: 1123 }); // A4 в пикселях
 
         // Заменяем Unicode символы на простой текст
         let processedHtml = htmlContent
@@ -138,8 +134,6 @@ export default async function handler(req, res) {
             height: `${contentHeight + 40}px`, // +40px запас
             printBackground: true,
             pageRanges: '1',
-            preferCSSPageSize: true,
-            scale: 1.5, // Увеличиваем масштаб для лучшего качества
             margin: {
                 top: '0mm',
                 bottom: '0mm',
