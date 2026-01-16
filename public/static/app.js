@@ -2078,9 +2078,15 @@ async function exportToPDF() {
                 })
             });
 
+            if (!response.ok) {
+                throw new Error(`HTTP error! status: ${response.status}`);
+            }
+
             const result = await response.json();
             
-            if (result.success) {
+            if (result.success && result.pdfBase64) {
+                console.log('PDF base64 length:', result.pdfBase64.length);
+                
                 // Скачиваем PDF
                 const blob = base64ToBlob(result.pdfBase64, 'application/pdf');
                 const url = URL.createObjectURL(blob);
@@ -2098,7 +2104,7 @@ async function exportToPDF() {
                 
                 showToast('PDF успешно скачан!', 'success');
             } else {
-                throw new Error(result.error);
+                throw new Error(result.error || 'Не удалось получить PDF');
             }
         } catch (error) {
             console.error('Web PDF Error:', error);
@@ -2460,13 +2466,20 @@ async function getGoogleAccessToken() {
 
 // Конвертация base64 в Blob
 function base64ToBlob(base64, mimeType) {
-    const byteCharacters = atob(base64);
-    const byteNumbers = new Array(byteCharacters.length);
-    
-    for (let i = 0; i < byteCharacters.length; i++) {
-        byteNumbers[i] = byteCharacters.charCodeAt(i);
+    try {
+        // Очищаем base64 от возможных пробелов и переносов строк
+        const cleanBase64 = base64.replace(/\s/g, '');
+        const byteCharacters = atob(cleanBase64);
+        const byteNumbers = new Array(byteCharacters.length);
+        
+        for (let i = 0; i < byteCharacters.length; i++) {
+            byteNumbers[i] = byteCharacters.charCodeAt(i);
+        }
+        
+        const byteArray = new Uint8Array(byteNumbers);
+        return new Blob([byteArray], { type: mimeType });
+    } catch (error) {
+        console.error('base64ToBlob error:', error);
+        throw new Error('Ошибка декодирования base64: ' + error.message);
     }
-    
-    const byteArray = new Uint8Array(byteNumbers);
-    return new Blob([byteArray], { type: mimeType });
 }
