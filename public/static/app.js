@@ -1184,7 +1184,7 @@ function getSystemPrompt() {
     return `Ты — эксперт по анализу автомобилей. Проанализируй фотографии из истории обслуживания автомобиля и создай детальный отчёт в формате JSON.
 
 ВАЖНО: Отчёт должен быть максимально подробным и информативным.
-
+ИТОГ БЕЗ КИТАЙСКИХ СИМВОЛОВ.
 Формат JSON (строго соблюдай структуру):
 
 {
@@ -1352,7 +1352,7 @@ async function callOpenAIAPI(apiKey, systemPrompt, userPrompt) {
             'Authorization': `Bearer ${apiKey}`
         },
         body: JSON.stringify({
-            model: 'gpt-4o-mini',
+            model: 'gpt-5.2',
             messages: [
                 { role: 'system', content: systemPrompt },
                 { 
@@ -1363,7 +1363,7 @@ async function callOpenAIAPI(apiKey, systemPrompt, userPrompt) {
                     ]
                 }
             ],
-            max_tokens: 8192
+            max_completion_tokens: 8192
         })
     });
     
@@ -1390,7 +1390,99 @@ async function openDriveLink() {
     
     // Если ссылки нет - загружаем в Drive
     if (!isElectron) {
-        showToast('Загрузка в Drive доступна только в десктоп версии', 'warning');
+        // ЛОГИКА ДЛЯ ВЕБА
+        try {
+            showToast('Авторизация Google Drive...', 'info');
+            
+            const accessToken = await getGoogleAccessToken();
+            
+            if (!accessToken) {
+                showToast('Необходима авторизация Google', 'error');
+                return;
+            }
+            
+            let pdfBase64 = appState.currentReport.pdfBase64;
+            
+            // Если PDF ещё не сгенерирован - генерируем
+            if (!pdfBase64) {
+                showToast('Генерация PDF...', 'info');
+                
+                const response = await fetch('/api/generate-pdf', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        htmlContent: appState.currentReport.htmlContent
+                    })
+                });
+
+                const result = await response.json();
+                
+                if (!result.success) {
+                    throw new Error(result.error);
+                }
+                
+                pdfBase64 = result.pdfBase64;
+                appState.currentReport.pdfBase64 = pdfBase64;
+                await saveData();
+            }
+            
+            showToast('Загрузка в Google Drive...', 'info');
+            
+            const filename = `${sanitizeForFilename(appState.currentReport.vin)}_${formatDateForFile(appState.currentReport.createdAt)}.pdf`;
+            
+            // Загружаем напрямую через Google Drive API
+            const metadata = {
+                name: filename,
+                mimeType: 'application/pdf',
+                parents: ['18EZxRYhO94_U545EICtvtHCf7CeVzP0D']
+            };
+            
+            const form = new FormData();
+            form.append('metadata', new Blob([JSON.stringify(metadata)], { type: 'application/json' }));
+            
+            const pdfBlob = base64ToBlob(pdfBase64, 'application/pdf');
+            form.append('file', pdfBlob);
+            
+            const uploadResponse = await fetch('https://www.googleapis.com/upload/drive/v3/files?uploadType=multipart&fields=id,webViewLink', {
+                method: 'POST',
+                headers: {
+                    'Authorization': `Bearer ${accessToken}`
+                },
+                body: form
+            });
+            
+            if (!uploadResponse.ok) {
+                const errorText = await uploadResponse.text();
+                throw new Error(`Drive API error: ${uploadResponse.status} - ${errorText}`);
+            }
+            
+            const file = await uploadResponse.json();
+            
+            // Делаем файл публичным
+            await fetch(`https://www.googleapis.com/drive/v3/files/${file.id}/permissions`, {
+                method: 'POST',
+                headers: {
+                    'Authorization': `Bearer ${accessToken}`,
+                    'Content-Type': 'application/json'
+                },
+                body: JSON.stringify({
+                    role: 'reader',
+                    type: 'anyone'
+                })
+            });
+            
+            appState.currentReport.driveUrl = file.webViewLink;
+            appState.currentReport.driveFileId = file.id;
+            await saveData();
+            
+            await navigator.clipboard.writeText(file.webViewLink);
+            showToast('PDF загружен в Drive! Ссылка скопирована', 'success');
+            window.open(file.webViewLink, '_blank');
+            
+        } catch (error) {
+            console.error('Web Drive upload error:', error);
+            showToast('Ошибка загрузки в Drive: ' + error.message, 'error');
+        }
         return;
     }
     
@@ -1971,32 +2063,60 @@ function generateComponentHTML(name, component) {
 async function exportToPDF() {
     if (!appState.currentReport) return;
     
+    const filename = `${sanitizeForFilename(appState.currentReport.vin)}_${formatDateForFile(appState.currentReport.createdAt)}.pdf`;
+
     if (!isElectron) {
-        showToast('PDF экспорт доступен только в десктоп версии', 'warning');
+        // ЛОГИКА ДЛЯ ВЕБА - используем API
+        try {
+            showToast('Генерация PDF...', 'info');
+            
+            const response = await fetch('/api/generate-pdf', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    htmlContent: appState.currentReport.htmlContent
+                })
+            });
+
+            const result = await response.json();
+            
+            if (result.success) {
+                // Скачиваем PDF
+                const blob = base64ToBlob(result.pdfBase64, 'application/pdf');
+                const url = URL.createObjectURL(blob);
+                const a = document.createElement('a');
+                a.href = url;
+                a.download = filename;
+                document.body.appendChild(a);
+                a.click();
+                document.body.removeChild(a);
+                URL.revokeObjectURL(url);
+                
+                // Сохраняем base64 для последующей загрузки в Drive
+                appState.currentReport.pdfBase64 = result.pdfBase64;
+                await saveData();
+                
+                showToast('PDF успешно скачан!', 'success');
+            } else {
+                throw new Error(result.error);
+            }
+        } catch (error) {
+            console.error('Web PDF Error:', error);
+            showToast('Ошибка генерации PDF: ' + error.message, 'error');
+        }
         return;
     }
     
+    // ЛОГИКА ДЛЯ ELECTRON
     try {
         showToast('PDF экспортируется...', 'info');
-        
-        const filename = `${sanitizeForFilename(appState.currentReport.vin)}_${formatDateForFile(appState.currentReport.createdAt)}.pdf`;
-
-        
         const result = await ipcRenderer.invoke('export-to-pdf', {
             htmlContent: appState.currentReport.htmlContent,
             filename: filename
         });
-        
-        if (result.success) {
-            showToast('PDF успешно сохранён!', 'success');
-        } else if (result.canceled) {
-            showToast('Экспорт отменён', 'info');
-        } else {
-            throw new Error(result.error || 'Неизвестная ошибка');
-        }
+        if (result.success) showToast('PDF успешно сохранён!', 'success');
     } catch (error) {
-        console.error('PDF export error:', error);
-        showToast(`Ошибка при экспорте: ${error.message}`, 'error');
+        showToast(`Ошибка: ${error.message}`, 'error');
     }
 }
 
@@ -2279,3 +2399,74 @@ document.addEventListener('keydown', (e) => {
         closeImageModal();
     }
 });
+
+// ============================================
+// Вспомогательные функции для веб-версии
+// ============================================
+
+// Google OAuth для веба
+async function getGoogleAccessToken() {
+    return new Promise((resolve, reject) => {
+        const CLIENT_ID = '3349739192-b1anlk17l8c1ba1h1l6qnq7832aqimvf.apps.googleusercontent.com';
+        const REDIRECT_URI = window.location.origin;
+        const SCOPE = 'https://www.googleapis.com/auth/drive.file';
+        
+        const authUrl = `https://accounts.google.com/o/oauth2/v2/auth?` +
+            `client_id=${CLIENT_ID}&` +
+            `redirect_uri=${encodeURIComponent(REDIRECT_URI)}&` +
+            `response_type=token&` +
+            `scope=${encodeURIComponent(SCOPE)}&` +
+            `prompt=consent`;
+        
+        const authWindow = window.open(authUrl, 'Google Auth', 'width=500,height=600');
+        
+        if (!authWindow) {
+            reject(new Error('Не удалось открыть окно авторизации. Разрешите всплывающие окна.'));
+            return;
+        }
+        
+        const checkWindow = setInterval(() => {
+            try {
+                if (authWindow.closed) {
+                    clearInterval(checkWindow);
+                    reject(new Error('Окно авторизации закрыто'));
+                    return;
+                }
+                
+                const url = authWindow.location.href;
+                
+                if (url.includes('access_token')) {
+                    const params = new URLSearchParams(url.split('#')[1]);
+                    const accessToken = params.get('access_token');
+                    
+                    authWindow.close();
+                    clearInterval(checkWindow);
+                    resolve(accessToken);
+                }
+            } catch (e) {
+                // Cross-origin error - ожидаемо
+            }
+        }, 100);
+        
+        setTimeout(() => {
+            clearInterval(checkWindow);
+            if (authWindow && !authWindow.closed) {
+                authWindow.close();
+            }
+            reject(new Error('Timeout авторизации'));
+        }, 5 * 60 * 1000);
+    });
+}
+
+// Конвертация base64 в Blob
+function base64ToBlob(base64, mimeType) {
+    const byteCharacters = atob(base64);
+    const byteNumbers = new Array(byteCharacters.length);
+    
+    for (let i = 0; i < byteCharacters.length; i++) {
+        byteNumbers[i] = byteCharacters.charCodeAt(i);
+    }
+    
+    const byteArray = new Uint8Array(byteNumbers);
+    return new Blob([byteArray], { type: mimeType });
+}

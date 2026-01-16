@@ -58,12 +58,14 @@
   },
   "dependencies": {
     "@getstation/electron-google-oauth2": "^14.0.0",
+    "@sparticuz/chromium": "^119.0.2",
     "global-agent": "^3.0.0",
     "global-tunnel-ng": "^2.7.1",
     "googleapis": "^126.0.0",
     "https-proxy-agent": "^7.0.6",
     "node-fetch": "^2.7.0",
-    "proxy-agent": "^6.5.0"
+    "proxy-agent": "^6.5.0",
+    "puppeteer-core": "^21.11.0"
   },
   "devDependencies": {
     "concurrently": "^9.0.0",
