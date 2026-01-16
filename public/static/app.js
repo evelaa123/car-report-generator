@@ -1387,33 +1387,45 @@ async function callOpenAIAPI(apiKey, systemPrompt, userPrompt) {
 async function openDriveLink() {
     if (!appState.currentReport) return;
     
-    // Если уже есть ссылка - открываем
+    console.log('[openDriveLink] Current driveUrl:', appState.currentReport.driveUrl);
+    console.log('[openDriveLink] Current driveFileId:', appState.currentReport.driveFileId);
+    
+    // Если уже есть ссылка - открываем с timestamp для обновления кеша
     if (appState.currentReport.driveUrl) {
+        const urlWithCache = `${appState.currentReport.driveUrl}?t=${Date.now()}`;
+        console.log('[openDriveLink] Opening existing link with cache buster:', urlWithCache);
         if (isElectron) {
-            ipcRenderer.invoke('open-external', appState.currentReport.driveUrl);
+            ipcRenderer.invoke('open-external', urlWithCache);
         } else {
-            window.open(appState.currentReport.driveUrl, '_blank');
+            window.open(urlWithCache, '_blank');
         }
         return;
     }
+    
+    console.log('[openDriveLink] No existing link, uploading to Drive...');
     
     // Если ссылки нет - загружаем в Drive
     if (!isElectron) {
         // ЛОГИКА ДЛЯ ВЕБА
         try {
+            console.log('[Drive Upload] Starting upload process...');
             showToast('Авторизация Google Drive...', 'info');
             
             const accessToken = await getGoogleAccessToken();
             
             if (!accessToken) {
+                console.error('[Drive Upload] No access token');
                 showToast('Необходима авторизация Google', 'error');
                 return;
             }
+            
+            console.log('[Drive Upload] Access token obtained');
             
             let pdfBase64 = appState.currentReport.pdfBase64;
             
             // Если PDF ещё не сгенерирован - генерируем
             if (!pdfBase64) {
+                console.log('[Drive Upload] PDF not generated yet, generating...');
                 showToast('Генерация PDF...', 'info');
                 
                 const response = await fetch('/api/generate-pdf', {
@@ -1425,6 +1437,7 @@ async function openDriveLink() {
                 });
 
                 const result = await response.json();
+                console.log('[Drive Upload] PDF generation response:', result.success ? 'Success' : 'Failed');
                 
                 if (!result.success) {
                     throw new Error(result.error);
@@ -1435,6 +1448,7 @@ async function openDriveLink() {
                 await saveData();
             }
             
+            console.log('[Drive Upload] PDF ready, base64 length:', pdfBase64.length);
             showToast('Загрузка в Google Drive...', 'info');
             
             const filename = `${sanitizeForFilename(appState.currentReport.vin)}_${formatDateForFile(appState.currentReport.createdAt)}.pdf`;
@@ -1444,6 +1458,7 @@ async function openDriveLink() {
             
             // Если файл уже существует на Drive - обновляем его
             if (appState.currentReport.driveFileId) {
+                console.log('[Drive Upload] Updating existing file ID:', appState.currentReport.driveFileId);
                 showToast('Обновление существующего файла...', 'info');
                 
                 const form = new FormData();
@@ -1463,6 +1478,7 @@ async function openDriveLink() {
                 });
             } else {
                 // Создаём новый файл
+                console.log('[Drive Upload] Creating new file');
                 const metadata = {
                     name: filename,
                     mimeType: 'application/pdf',
@@ -1484,12 +1500,15 @@ async function openDriveLink() {
             
             if (!uploadResponse.ok) {
                 const errorText = await uploadResponse.text();
+                console.error('[Drive Upload] Upload failed:', uploadResponse.status, errorText);
                 throw new Error(`Drive API error: ${uploadResponse.status} - ${errorText}`);
             }
             
             const file = await uploadResponse.json();
+            console.log('[Drive Upload] Upload successful:', file);
             
             // Делаем файл публичным
+            console.log('[Drive Upload] Setting file permissions...');
             await fetch(`https://www.googleapis.com/drive/v3/files/${file.id}/permissions`, {
                 method: 'POST',
                 headers: {
@@ -1502,16 +1521,23 @@ async function openDriveLink() {
                 })
             });
             
+            console.log('[Drive Upload] Permissions set, saving state...');
             appState.currentReport.driveUrl = file.webViewLink;
             appState.currentReport.driveFileId = file.id;
             await saveData();
             
+            // Добавляем timestamp к ссылке для обхода кеша
+            const urlWithCache = `${file.webViewLink}?t=${Date.now()}`;
             await navigator.clipboard.writeText(file.webViewLink);
-            showToast('PDF загружен в Drive! Ссылка скопирована', 'success');
-            window.open(file.webViewLink, '_blank');
+            
+            const isUpdate = appState.currentReport.driveFileId;
+            const message = isUpdate ? 'PDF обновлён в Drive! Ссылка скопирована' : 'PDF загружен в Drive! Ссылка скопирована';
+            console.log('[Drive Upload] Complete:', message);
+            showToast(message, 'success');
+            window.open(urlWithCache, '_blank');
             
         } catch (error) {
-            console.error('Web Drive upload error:', error);
+            console.error('[Drive Upload] Error:', error);
             showToast('Ошибка загрузки в Drive: ' + error.message, 'error');
         }
         return;
