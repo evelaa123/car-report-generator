@@ -40,6 +40,24 @@
             border-color: #667eea;
             background: rgba(102, 126, 234, 0.1);
         }
+        .report-content-editable[contenteditable="true"] {
+    cursor: text;
+}
+
+.report-content-editable[contenteditable="true"]:focus {
+    box-shadow: 0 0 0 3px rgba(74, 74, 138, 0.3);
+}
+
+.report-content-editable p {
+    margin: 10px 0;
+}
+
+.report-content-editable h1,
+.report-content-editable h2,
+.report-content-editable h3 {
+    margin: 15px 0 10px 0;
+}
+
         
         .image-preview { transition: all 0.3s ease; }
         .image-preview:hover { transform: scale(1.05); }
@@ -146,7 +164,19 @@
                         <p class="text-gray-400 mb-4">или нажмите для выбора файлов</p>
                         <p class="text-sm text-gray-500">JPG, PNG, WebP • Большие изображения автоматически обрабатываются</p>
                     </div>
-                    
+<!-- Параметры отчёта -->
+<div id="report-options" class="hidden mb-6 card-gradient rounded-xl p-6">
+    <h3 class="text-lg font-semibold mb-4">Параметры генерации</h3>
+    
+    <label class="flex items-center gap-3 cursor-pointer">
+        <input type="checkbox" id="split-reports" class="w-5 h-5 rounded border-white/20 bg-black/30 text-purple-600 focus:ring-purple-500">
+        <div>
+            <span class="font-semibold">Разделить на два отчёта</span>
+            <p class="text-sm text-gray-400">Создать отдельно технический (полный) и страховой (краткий) отчёты</p>
+        </div>
+    </label>
+</div>
+
                     <!-- Превью загруженных изображений -->
                     <div id="images-preview" class="hidden mb-8">
                         <div class="flex items-center justify-between mb-4">
@@ -218,17 +248,18 @@
                         <button onclick="showPage('history')" class="text-gray-400 hover:text-white flex items-center gap-2">
                             <i class="fas fa-arrow-left"></i> Назад
                         </button>
-                        <div class="flex gap-3">
-                            <button onclick="exportToPDF()" class="bg-red-600 hover:bg-red-700 px-4 py-2 rounded-lg flex items-center gap-2" title="Скачать PDF">
-                                <i class="fas fa-file-pdf"></i> PDF
-                            </button>
-                            <button onclick="createGoogleDoc()" class="btn-blue px-4 py-2 rounded-lg flex items-center gap-2" title="Создать Google Doc">
-                                <i class="fab fa-google-drive"></i> Google Docs
-                            </button>
-                            <button onclick="exportReport()" class="bg-purple-600 hover:bg-purple-700 px-4 py-2 rounded-lg flex items-center gap-2" title="Скачать HTML">
-                                <i class="fas fa-download"></i> HTML
-                            </button>
-                        </div>
+<div class="flex gap-3">
+    <button onclick="exportToPDF()" class="bg-red-600 hover:bg-red-700 px-4 py-2 rounded-lg flex items-center gap-2" title="Экспорт PDF">
+        <i class="fas fa-file-pdf"></i> Экспорт PDF
+    </button>
+    <button onclick="openDriveLink()" class="btn-blue px-4 py-2 rounded-lg flex items-center gap-2" title="Открыть в Google Drive">
+        <i class="fab fa-google-drive"></i> Google Drive
+    </button>
+    <button onclick="copyReportLink()" class="bg-purple-600 hover:bg-purple-700 px-4 py-2 rounded-lg flex items-center gap-2" title="Копировать ссылку на Drive">
+        <i class="fas fa-link"></i> Копировать ссылку
+    </button>
+</div>
+
                     </div>
                     <div id="report-content" class="card-gradient rounded-2xl p-8 prose prose-invert max-w-none overflow-auto"></div>
                 </div>
@@ -316,30 +347,7 @@
                             </div>
                         </div>
                         
-                        <!-- Google Docs API (опционально) -->
-                        <div class="card-gradient rounded-2xl p-6">
-                            <h3 class="text-lg font-semibold mb-4 flex items-center gap-2">
-                                <i class="fab fa-google text-yellow-400"></i>
-                                Google Docs API (опционально)
-                            </h3>
-                            <p class="text-gray-400 text-sm mb-4">Для автоматического создания Google Docs</p>
-                            <div class="space-y-4">
-                                <div>
-                                    <label class="block text-sm text-gray-400 mb-2">Google API Key</label>
-                                    <input type="password" id="google-api-key" placeholder="AIza..." 
-                                           class="w-full bg-black/30 border border-white/10 rounded-lg px-4 py-3 focus:outline-none focus:border-purple-500">
-                                </div>
-                                <div>
-                                    <label class="block text-sm text-gray-400 mb-2">Google Client ID</label>
-                                    <input type="text" id="google-client-id" placeholder="xxx.apps.googleusercontent.com" 
-                                           class="w-full bg-black/30 border border-white/10 rounded-lg px-4 py-3 focus:outline-none focus:border-purple-500">
-                                </div>
-                            </div>
-                            <p class="text-xs text-gray-500 mt-3">
-                                <i class="fas fa-info-circle mr-1"></i>
-                                Без API ключа текст будет скопирован для ручной вставки в Google Docs
-                            </p>
-                        </div>
+
                         
                         <!-- Кнопка сохранения -->
                         <button onclick="saveSettings()" class="btn-primary w-full py-4 rounded-xl text-lg font-semibold">
@@ -367,6 +375,6 @@
     <!-- Скрытый input для веб-версии -->
     <input type="file" id="file-input" multiple accept="image/*" class="hidden" onchange="handleFileSelect(event)">
 
-    <script src="/static/app.js"></script>
+    <script src="./static/app.js"></script>
 </body>
 </html>

@@ -5,6 +5,7 @@
 
 // Определяем режим работы (Electron или Web)
 const isElectron = typeof require !== 'undefined';
+
 let ipcRenderer = null;
 if (isElectron) {
     ipcRenderer = require('electron').ipcRenderer;
@@ -44,21 +45,57 @@ document.addEventListener('DOMContentLoaded', async () => {
     updateUI();
     initGoogleAuth();
 });
-
-// Инициализация Google Auth
-function initGoogleAuth() {
-    // Google Identity Services загрузится асинхронно
-    if (appState.settings.googleClientId && window.google) {
-        try {
-            google.accounts.id.initialize({
-                client_id: appState.settings.googleClientId,
-                callback: handleGoogleSignIn
-            });
-        } catch (e) {
-            console.log('Google Auth not available');
-        }
+function sanitizeForFilename(str) {
+    // Заменяем недопустимые символы на подчёркивание
+    return str.replace(/[<>:"/\\|?*]/g, '_');
+}
+// Инициализация Google Auth (для Electron OAuth)
+async function initGoogleAuth() {
+    if (!isElectron) return;
+    
+    // Проверяем авторизацию при запуске
+    const isAuthorized = await ipcRenderer.invoke('check-google-auth');
+    
+    if (!isAuthorized) {
+        // Показываем уведомление
+        showGoogleAuthPrompt();
     }
 }
+
+function showGoogleAuthPrompt() {
+    const promptDiv = document.createElement('div');
+    promptDiv.id = 'google-auth-prompt';
+    promptDiv.className = 'fixed top-4 right-4 bg-blue-600 text-white px-6 py-4 rounded-lg shadow-lg z-50';
+    promptDiv.innerHTML = `
+        <div class="flex items-center gap-3">
+            <i class="fab fa-google text-2xl"></i>
+            <div>
+                <p class="font-semibold">Требуется подключение Google Drive</p>
+                <p class="text-sm text-blue-100">Для создания отчётов в Google Docs</p>
+            </div>
+            <button onclick="authorizeGoogleDrive()" class="ml-4 bg-white text-blue-600 px-4 py-2 rounded font-semibold hover:bg-blue-50">
+                Подключить
+            </button>
+        </div>
+    `;
+    document.body.appendChild(promptDiv);
+}
+
+async function authorizeGoogleDrive() {
+    const prompt = document.getElementById('google-auth-prompt');
+    if (prompt) prompt.remove();
+    
+    showToast('Откроется браузер для авторизации...', 'info');
+    
+    const result = await ipcRenderer.invoke('authorize-google');
+    
+    if (result.success) {
+        showToast('Google Drive подключен!', 'success');
+    } else {
+        showToast('Ошибка авторизации: ' + result.error, 'error');
+    }
+}
+
 
 function handleGoogleSignIn(response) {
     appState.googleAuth = response;
@@ -172,6 +209,48 @@ function updateLogoPreview() {
         }
     }
 }
+async function uploadToGoogleDocs(report) {
+    if (!isElectron) return;
+
+    try {
+        // Проверяем авторизацию
+        const isAuthorized = await ipcRenderer.invoke('check-google-auth');
+        if (!isAuthorized) {
+            showToast('Сначала подключите Google Drive', 'warning');
+            authorizeGoogleDrive();
+            return;
+        }
+
+        // ← ДОБАВЬТЕ ПРОВЕРКУ
+        if (!report || !report.htmlContent) {
+            showToast('Отчёт не содержит данных для экспорта', 'error');
+            return;
+        }
+
+        showToast('Создание Google документа...', 'info');
+        
+        const result = await ipcRenderer.invoke('create-google-doc', {
+            title: `Отчёт Авто: ${report.brand || ''} ${report.vin || ''}`,
+            contentHtml: report.htmlContent // ← Убедитесь что это не undefined
+        });
+
+        if (result.success) {
+            report.googleDocUrl = result.url;
+            await saveData();
+            
+            showToast('Google Doc успешно создан!', 'success');
+            ipcRenderer.invoke('open-external', result.url);
+        } else {
+            throw new Error(result.error);
+        }
+    } catch (error) {
+        console.error('Upload error:', error);
+        showToast('Ошибка Google Docs: ' + error.message, 'error');
+    }
+}
+
+
+
 
 // Загрузка логотипа из файла
 function handleLogoUpload(event) {
@@ -283,8 +362,8 @@ function renderReportsList() {
     if (!container) return;
     
     const searchQuery = document.getElementById('search-reports')?.value.toLowerCase() || '';
-    
     let filteredReports = appState.reports;
+    
     if (searchQuery) {
         filteredReports = appState.reports.filter(r => 
             (r.vin && r.vin.toLowerCase().includes(searchQuery)) ||
@@ -300,42 +379,124 @@ function renderReportsList() {
     
     if (noReports) noReports.classList.add('hidden');
     
-    filteredReports.sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt));
+    // Группируем по VIN
+    const groupedByVIN = {};
+    filteredReports.forEach(report => {
+        const vin = report.vin || 'Неизвестно';
+        if (!groupedByVIN[vin]) {
+            groupedByVIN[vin] = [];
+        }
+        groupedByVIN[vin].push(report);
+    });
     
-    container.innerHTML = filteredReports.map(report => `
-        <div class="report-card card-gradient rounded-xl p-6 cursor-pointer" onclick="showReportPage('${report.id}')">
-            <div class="flex items-start justify-between">
-                <div class="flex-1">
-                    <div class="flex items-center gap-3 mb-2">
-                        <span class="bg-purple-600 text-xs px-2 py-1 rounded">${report.brand || 'Неизвестно'}</span>
-                        <span class="text-gray-400 text-sm">${formatDate(report.createdAt)}</span>
-                        <span class="text-xs px-2 py-1 rounded ${report.aiProvider === 'gemini' ? 'bg-blue-600' : 'bg-green-600'}">${report.aiProvider === 'gemini' ? 'Gemini' : 'GPT'}</span>
+    // Сортируем группы по дате последнего отчёта
+    const sortedVINs = Object.keys(groupedByVIN).sort((a, b) => {
+        const latestA = Math.max(...groupedByVIN[a].map(r => new Date(r.createdAt)));
+        const latestB = Math.max(...groupedByVIN[b].map(r => new Date(r.createdAt)));
+        return latestB - latestA;
+    });
+    
+    container.innerHTML = sortedVINs.map(vin => {
+        const reports = groupedByVIN[vin].sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt));
+        const latestReport = reports[0];
+        const hasMultiple = reports.length > 1;
+        
+        return `
+            <div class="card-gradient rounded-2xl p-6 mb-4">
+                <!-- Заголовок группы -->
+                <div class="flex items-center justify-between mb-4 cursor-pointer" onclick="toggleVINGroup('${vin}')">
+                    <div class="flex-1">
+                        <div class="flex items-center gap-3 mb-2">
+                            <span class="bg-purple-600 text-xs px-2 py-1 rounded">${latestReport.brand || ''}</span>
+                            <span class="text-gray-400 text-sm">${formatDate(latestReport.createdAt)}</span>
+                            ${hasMultiple ? `<span class="bg-blue-600/30 text-blue-400 text-xs px-2 py-1 rounded">${reports.length} отчёта</span>` : ''}
+                        </div>
+                        <h3 class="text-xl font-bold">${vin}</h3>
+                        <p class="text-gray-400 text-sm">${latestReport.model || ''}</p>
+                        
+                        <div class="flex items-center gap-4 mt-2 text-sm">
+                            ${latestReport.rating ? `<span class="text-yellow-400"><i class="fas fa-star"></i> ${latestReport.rating}</span>` : ''}
+                            ${latestReport.mileage ? `<span class="text-blue-400"><i class="fas fa-tachometer-alt"></i> ${latestReport.mileage} км</span>` : ''}
+                        </div>
                     </div>
-                    <h3 class="text-lg font-semibold mb-1">${report.vin || 'VIN не определён'}</h3>
-                    <p class="text-gray-400 text-sm">${report.model || ''}</p>
-                    <div class="flex items-center gap-4 mt-3 text-sm">
-                        ${report.rating ? `<span class="text-yellow-400"><i class="fas fa-star"></i> ${report.rating}</span>` : ''}
-                        ${report.mileage ? `<span class="text-blue-400"><i class="fas fa-tachometer-alt"></i> ${report.mileage} км</span>` : ''}
+                    
+                    <div class="flex items-center gap-2">
+                        ${hasMultiple ? `
+                            <i class="fas fa-chevron-down text-gray-400 transition-transform duration-200" id="arrow-${vin}"></i>
+                        ` : ''}
                     </div>
                 </div>
-                <div class="flex gap-2">
-                    ${report.googleDocUrl ? `
-                        <button onclick="event.stopPropagation(); openLink('${report.googleDocUrl}')" 
-                                class="w-10 h-10 rounded-lg bg-green-600/20 text-green-400 hover:bg-green-600/40 flex items-center justify-center"
-                                title="Открыть Google Doc">
-                            <i class="fab fa-google-drive"></i>
-                        </button>
-                    ` : ''}
-                    <button onclick="event.stopPropagation(); deleteReport('${report.id}')" 
-                            class="w-10 h-10 rounded-lg bg-red-600/20 text-red-400 hover:bg-red-600/40 flex items-center justify-center"
-                            title="Удалить">
-                        <i class="fas fa-trash"></i>
-                    </button>
+                
+                <!-- Список отчётов в группе -->
+                <div id="group-${vin}" class="${hasMultiple ? 'hidden' : ''} space-y-3 mt-4 pt-4 border-t border-white/10" 
+     style="transition: max-height 0.3s ease-in-out, opacity 0.3s ease-in-out; max-height: ${hasMultiple ? '0px' : 'none'}; opacity: ${hasMultiple ? '0' : '1'}; overflow: hidden;">
+                    ${reports.map(report => {
+                        const typeLabel = report.type === 'insurance' ? 'Страховой' : 'Технический';
+                        const typeIcon = report.type === 'insurance' ? 'fa-file-invoice' : 'fa-file-alt';
+                        const typeColor = report.type === 'insurance' ? 'bg-orange-600' : 'bg-purple-600';
+                        
+                        return `
+                            <div class="bg-black/30 rounded-lg p-4 hover:bg-black/40 transition cursor-pointer" onclick="showReportPage('${report.id}')">
+                                <div class="flex items-center justify-between">
+                                    <div class="flex items-center gap-3">
+                                        <span class="text-xs px-2 py-1 rounded ${typeColor} flex items-center gap-1">
+                                            <i class="fas ${typeIcon}"></i>
+                                            ${typeLabel}
+                                        </span>
+                                        <span class="text-gray-400 text-sm">${formatDate(report.createdAt)}</span>
+                                        <span class="text-xs px-2 py-1 rounded ${report.aiProvider === 'gemini' ? 'bg-blue-600' : 'bg-green-600'}">
+                                            ${report.aiProvider === 'gemini' ? 'Gemini' : 'GPT'}
+                                        </span>
+                                    </div>
+                                    
+                                    <div class="flex gap-2">
+                                        ${report.driveUrl ? `
+                                            <button onclick="event.stopPropagation(); openLinkAndCopy('${report.driveUrl}')" 
+                                                    class="w-8 h-8 rounded-lg bg-blue-600/20 text-blue-400 hover:bg-blue-600/40 flex items-center justify-center" 
+                                                    title="Google Drive">
+                                                <i class="fab fa-google-drive text-sm"></i>
+                                            </button>
+                                        ` : ''}
+                                        <button onclick="event.stopPropagation(); deleteReport('${report.id}')" 
+                                                class="w-8 h-8 rounded-lg bg-red-600/20 text-red-400 hover:bg-red-600/40 flex items-center justify-center" 
+                                                title="Удалить">
+                                            <i class="fas fa-trash text-sm"></i>
+                                        </button>
+                                    </div>
+                                </div>
+                            </div>
+                        `;
+                    }).join('')}
                 </div>
             </div>
-        </div>
-    `).join('');
+        `;
+    }).join('');
 }
+
+function toggleVINGroup(vin) {
+    const group = document.getElementById(`group-${vin}`);
+    const arrow = document.getElementById(`arrow-${vin}`);
+    
+    if (group && arrow) {
+        if (group.classList.contains('hidden')) {
+            group.classList.remove('hidden');
+            // Даём время браузеру применить display
+            setTimeout(() => {
+                group.style.maxHeight = group.scrollHeight + 'px';
+                group.style.opacity = '1';
+            }, 10);
+        } else {
+            group.style.maxHeight = '0px';
+            group.style.opacity = '0';
+            setTimeout(() => {
+                group.classList.add('hidden');
+            }, 300);
+        }
+        arrow.classList.toggle('rotate-180');
+    }
+}
+
+
 
 function renderCarDetails(vin) {
     const container = document.getElementById('car-details');
@@ -398,20 +559,154 @@ function renderReportContent(report) {
     const container = document.getElementById('report-content');
     if (!container) return;
     
-    container.innerHTML = report.htmlContent || '<p class="text-gray-400">Содержимое отчёта недоступно</p>';
+    const typeLabel = report.type === 'insurance' ? 'Страховой отчёт' : 'Технический отчёт';
+    const isEditing = container.getAttribute('data-editing') === 'true';
+    
+    container.innerHTML = `
+        <!-- Панель управления -->
+        <div class="flex items-center justify-between mb-6 p-4 bg-black/30 rounded-xl">
+            <div class="flex items-center gap-3">
+                <span class="text-sm text-gray-400">${typeLabel}</span>
+                ${report.type ? `<span class="text-xs px-2 py-1 rounded ${report.type === 'insurance' ? 'bg-orange-600' : 'bg-purple-600'}">
+                    <i class="fas ${report.type === 'insurance' ? 'fa-file-invoice' : 'fa-file-alt'}"></i>
+                </span>` : ''}
+            </div>
+            
+            <div class="flex gap-2">
+                <button onclick="toggleEditMode()" id="edit-btn" 
+                        class="px-4 py-2 rounded-lg ${isEditing ? 'bg-green-600 hover:bg-green-700' : 'bg-blue-600 hover:bg-blue-700'} transition flex items-center gap-2">
+                    <i class="fas ${isEditing ? 'fa-save' : 'fa-edit'}"></i>
+                    <span>${isEditing ? 'Сохранить' : 'Редактировать'}</span>
+                </button>
+            </div>
+        </div>
+        
+        <!-- Контент отчёта -->
+        <div id="report-editable" 
+             contenteditable="false" 
+             class="report-content-editable"
+             style="outline: none; min-height: 400px; padding: 20px; border-radius: 12px; background: white; color: #333;">
+            ${report.htmlContent || '<p class="text-gray-400">Отчёт пуст</p>'}
+        </div>
+    `;
 }
+
+async function toggleEditMode() {
+    const container = document.getElementById('report-content');
+    const editable = document.getElementById('report-editable');
+    const btn = document.getElementById('edit-btn');
+    
+    if (!container || !editable || !appState.currentReport) return;
+    
+    const isEditing = container.getAttribute('data-editing') === 'true';
+    
+    if (isEditing) {
+        // Сохраняем изменения
+        appState.currentReport.htmlContent = editable.innerHTML;
+        await saveData();
+        
+        editable.contentEditable = 'false';
+        editable.style.border = 'none';
+        container.setAttribute('data-editing', 'false');
+        
+        btn.innerHTML = '<i class="fas fa-edit"></i><span>Редактировать</span>';
+        btn.className = 'px-4 py-2 rounded-lg bg-blue-600 hover:bg-blue-700 transition flex items-center gap-2';
+        
+        showToast('Изменения сохранены!', 'success');
+        
+        // Обновляем PDF в Drive если он существует
+        if (isElectron && appState.currentReport.driveFileId) {
+            showToast('Обновление PDF в Drive...', 'info');
+            
+            try {
+                const pdfFilename = `${sanitizeForFilename(appState.currentReport.vin)}_${appState.currentReport.type || 'technical'}_${formatDateForFile(appState.currentReport.createdAt)}.pdf`;
+                
+                const result = await ipcRenderer.invoke('update-pdf-in-drive', {
+                    fileId: appState.currentReport.driveFileId,
+                    htmlContent: appState.currentReport.htmlContent,
+                    filename: pdfFilename
+                });
+                
+                if (result.success) {
+                    showToast('PDF обновлён в Drive!', 'success');
+                } else {
+                    // Если обновление не удалось - перезагружаем заново
+                    showToast('Загрузка нового PDF...', 'info');
+                    
+                    const uploadResult = await ipcRenderer.invoke('save-and-upload-pdf', {
+                        htmlContent: appState.currentReport.htmlContent,
+                        filename: pdfFilename
+                    });
+                    
+                    if (uploadResult.success && uploadResult.driveUrl) {
+                        appState.currentReport.driveUrl = uploadResult.driveUrl;
+                        appState.currentReport.driveFileId = uploadResult.driveFileId;
+                        appState.currentReport.localPdfPath = uploadResult.localPath;
+                        await saveData();
+                        showToast('Новый PDF загружен в Drive!', 'success');
+                    }
+                }
+            } catch (error) {
+                console.error('Drive update error:', error);
+                showToast('Ошибка обновления Drive: ' + error.message, 'error');
+            }
+        } else if (isElectron && appState.currentReport.localPdfPath) {
+            // Есть локальный PDF но нет в Drive - обновляем локально
+            showToast('Обновление локального PDF...', 'info');
+            
+            try {
+                const pdfFilename = `${sanitizeForFilename(appState.currentReport.vin)}_${appState.currentReport.type || 'technical'}_${formatDateForFile(appState.currentReport.createdAt)}.pdf`;
+                
+                const result = await ipcRenderer.invoke('save-and-upload-pdf', {
+                    htmlContent: appState.currentReport.htmlContent,
+                    filename: pdfFilename
+                });
+                
+                if (result.success) {
+                    appState.currentReport.localPdfPath = result.localPath;
+                    if (result.driveUrl) {
+                        appState.currentReport.driveUrl = result.driveUrl;
+                        appState.currentReport.driveFileId = result.driveFileId;
+                    }
+                    await saveData();
+                    showToast('PDF обновлён!', 'success');
+                }
+            } catch (error) {
+                console.error('PDF update error:', error);
+            }
+        }
+        
+    } else {
+        // Включаем режим редактирования
+        editable.contentEditable = 'true';
+        editable.style.border = '2px solid #4a4a8a';
+        editable.style.transition = 'border 0.2s';
+        editable.focus();
+        container.setAttribute('data-editing', 'true');
+        
+        btn.innerHTML = '<i class="fas fa-save"></i><span>Сохранить</span>';
+        btn.className = 'px-4 py-2 rounded-lg bg-green-600 hover:bg-green-700 transition flex items-center gap-2';
+        
+        showToast('Режим редактирования включён', 'info');
+    }
+}
+
 
 // ============================================
 // Работа с изображениями
 // ============================================
 
-function selectFiles() {
+async function selectFiles() {
     if (isElectron) {
-        ipcRenderer.invoke('select-files').then(result => {
-            if (!result.canceled && result.files.length > 0) {
-                addImages(result.files);
+        const result = await ipcRenderer.invoke('select-files');
+        if (!result.canceled && result.files.length > 0) {
+            // Вместо addImages(result.files) делаем так:
+            for (const file of result.files) {
+                // file.data уже содержит base64 из main.js
+                const processed = await processImage(file.data, file.name);
+                addImages(processed);
             }
-        });
+        }
     } else {
         document.getElementById('file-input').click();
     }
@@ -468,7 +763,8 @@ async function processImage(dataUrl, fileName) {
             const ctx = canvas.getContext('2d');
             
             let { width, height } = img;
-            
+            console.log(`[processImage] ${fileName}: ${width}x${height}, ratio: ${height/width}`);
+            console.log(`[processImage] Should split: ${height / width > 3}`);
             // Если изображение очень длинное (высота > 3x ширины), разбиваем на части
             if (height > width * 3) {
                 const chunks = Math.ceil(height / CHUNK_HEIGHT);
@@ -554,10 +850,11 @@ async function processImage(dataUrl, fileName) {
 function addImages(images) {
     appState.images.push(...images);
     renderImagesPreview();
-    
     document.getElementById('images-preview').classList.remove('hidden');
+    document.getElementById('report-options').classList.remove('hidden');
     document.getElementById('generate-section').classList.remove('hidden');
 }
+
 
 function renderImagesPreview() {
     const grid = document.getElementById('images-grid');
@@ -594,6 +891,7 @@ function clearImages() {
     appState.images = [];
     renderImagesPreview();
     document.getElementById('images-preview').classList.add('hidden');
+    document.getElementById('report-options').classList.add('hidden');
     document.getElementById('generate-section').classList.add('hidden');
 }
 
@@ -615,6 +913,70 @@ function closeImageModal(event) {
         document.getElementById('image-modal').classList.add('hidden');
         document.getElementById('image-modal').classList.remove('flex');
     }
+}
+
+// ============================================
+// Восстановление неполного JSON
+// ============================================
+
+function repairIncompleteJSON(jsonStr) {
+    // Подсчитываем открытые и закрытые скобки и кавычки
+    let braceCount = 0;
+    let bracketCount = 0;
+    let inString = false;
+    let escaped = false;
+    let lastCharWasQuote = false;
+    
+    for (let i = 0; i < jsonStr.length; i++) {
+        const char = jsonStr[i];
+        
+        if (escaped) {
+            escaped = false;
+            continue;
+        }
+        
+        if (char === '\\') {
+            escaped = true;
+            continue;
+        }
+        
+        if (char === '"') {
+            inString = !inString;
+            lastCharWasQuote = true;
+        } else {
+            lastCharWasQuote = false;
+        }
+        
+        if (!inString) {
+            if (char === '{') braceCount++;
+            if (char === '}') braceCount--;
+            if (char === '[') bracketCount++;
+            if (char === ']') bracketCount--;
+        }
+    }
+    
+    // Если строка заканчивается незакрытой кавычкой, пытаемся понять контекст
+    if (inString && jsonStr.trim().endsWith('"')) {
+        // Скорее всего обрезана строка, удаляем незавершенную часть
+        jsonStr = jsonStr.substring(0, jsonStr.lastIndexOf('"'));
+    }
+    
+    // Закрываем незакрытые структуры
+    if (bracketCount > 0) {
+        jsonStr += ']'.repeat(bracketCount);
+    } else if (bracketCount < 0) {
+        // Если закрывающих скобок больше, удаляем лишние
+        jsonStr = jsonStr.replace(/\]+$/, '');
+    }
+    
+    if (braceCount > 0) {
+        jsonStr += '}'.repeat(braceCount);
+    } else if (braceCount < 0) {
+        // Если закрывающих скобок больше, удаляем лишние
+        jsonStr = jsonStr.replace(/\}+$/, '');
+    }
+    
+    return jsonStr;
 }
 
 // ============================================
@@ -659,53 +1021,156 @@ async function generateReport() {
         // Парсим JSON из ответа
         let reportData;
         try {
-            const jsonMatch = content.match(/\{[\s\S]*\}/);
+            let jsonText = content;
+            const codeBlockMatch = content.match(/```(?:json)?\s*\n([\s\S]*?)\n```/);
+            if (codeBlockMatch) {
+                jsonText = codeBlockMatch[1];
+            }
+            
+            const jsonMatch = jsonText.match(/\{[\s\S]*\}/);
             if (jsonMatch) {
-                reportData = JSON.parse(jsonMatch[0]);
+                let jsonStr = jsonMatch[0];
+                try {
+                    reportData = JSON.parse(jsonStr);
+                } catch (parseError) {
+                    jsonStr = repairIncompleteJSON(jsonStr);
+                    reportData = JSON.parse(jsonStr);
+                }
             } else {
-                throw new Error('JSON not found in response');
+                throw new Error('JSON не найден в ответе ИИ');
             }
         } catch (e) {
             console.error('Parse error:', e);
-            console.log('Raw content:', content);
-            reportData = { rawContent: content };
+            reportData = { rawContent: content, brand: 'Ошибка парсинга', vin: 'Неизвестно' };
         }
         
-        updateProgress('Генерация отчёта...', 85);
+        // Создание отчётов
+updateProgress('Создание отчётов...', 80);
+
+const splitReports = document.getElementById('split-reports').checked;
+const reports = [];
+
+if (splitReports) {
+    // Технический отчёт (полный)
+    const htmlContentTechnical = generateHTMLReport(reportData);
+    reports.push({
+        id: Date.now().toString(),
+        type: 'technical',
+        createdAt: new Date().toISOString(),
+        vin: reportData.vin || 'Неизвестно',
+        brand: reportData.brand || 'Неизвестно',
+        model: reportData.model || 'Неизвестно',
+        rating: reportData.rating || null,
+        mileage: reportData.lastMileage || null,
+        data: reportData,
+        htmlContent: htmlContentTechnical,
+        driveUrl: null,
+        driveFileId: null,
+        localPdfPath: null,
+        aiProvider: provider,
+        images: appState.images.slice(0, 3).map(i => ({ name: i.name }))
+    });
+    
+    // Страховой отчёт (краткий)
+    const htmlContentInsurance = generateInsuranceReport(reportData);
+    reports.push({
+        id: (Date.now() + 1).toString(),
+        type: 'insurance',
+        createdAt: new Date().toISOString(),
+        vin: reportData.vin || 'Неизвестно',
+        brand: reportData.brand || 'Неизвестно',
+        model: reportData.model || 'Неизвестно',
+        rating: reportData.rating || null,
+        mileage: reportData.lastMileage || null,
+        data: reportData,
+        htmlContent: htmlContentInsurance,
+        driveUrl: null,
+        driveFileId: null,
+        localPdfPath: null,
+        aiProvider: provider,
+        images: appState.images.slice(0, 3).map(i => ({ name: i.name }))
+    });
+} else {
+    // Один технический отчёт
+    const htmlContent = generateHTMLReport(reportData);
+    reports.push({
+        id: Date.now().toString(),
+        type: 'technical',
+        createdAt: new Date().toISOString(),
+        vin: reportData.vin || 'Неизвестно',
+        brand: reportData.brand || 'Неизвестно',
+        model: reportData.model || 'Неизвестно',
+        rating: reportData.rating || null,
+        mileage: reportData.lastMileage || null,
+        data: reportData,
+        htmlContent: htmlContent,
+        driveUrl: null,
+        driveFileId: null,
+        localPdfPath: null,
+        aiProvider: provider,
+        images: appState.images.slice(0, 3).map(i => ({ name: i.name }))
+    });
+}
+
+const report = reports[0]; // Для обратной совместимости с кодом ниже
+
+// --- АВТОСОХРАНЕНИЕ PDF + GOOGLE DRIVE ---
+if (isElectron) {
+    for (let i = 0; i < reports.length; i++) {
+        const rep = reports[i];
+        const reportType = rep.type === 'technical' ? 'Технический' : 'Страховой';
         
-        const htmlContent = generateHTMLReport(reportData);
+        updateProgress(`Сохранение ${reportType} PDF (${i+1}/${reports.length})...`, 85 + (i * 5));
         
-        const report = {
-            id: generateId(),
-            createdAt: new Date().toISOString(),
-            vin: reportData.vin || 'Неизвестно',
-            brand: reportData.brand || 'Неизвестно',
-            model: reportData.model || '',
-            rating: reportData.rating || null,
-            mileage: reportData.lastMileage || null,
-            data: reportData,
-            htmlContent: htmlContent,
-            googleDocUrl: null,
-            aiProvider: provider,
-            images: appState.images.map(i => i.data.substring(0, 100) + '...') // Сохраняем только превью
-        };
-        
-        updateProgress('Сохранение отчёта...', 95);
-        
-        appState.reports.unshift(report);
-        await saveData();
-        
-        updateProgress('Готово!', 100);
-        
-        clearImages();
-        updateUI();
-        
-        setTimeout(() => {
-            document.getElementById('progress-section').classList.add('hidden');
-            document.getElementById('generate-section').classList.remove('hidden');
-            showReportPage(report.id);
-            showToast('Отчёт успешно создан!', 'success');
-        }, 500);
+        try {
+            const pdfFilename = `${sanitizeForFilename(rep.vin)}_${rep.type}_${formatDateForFile(rep.createdAt)}.pdf`;
+            
+            const result = await ipcRenderer.invoke('save-and-upload-pdf', {
+                htmlContent: rep.htmlContent,
+                filename: pdfFilename
+            });
+            
+            if (result.success) {
+                rep.localPdfPath = result.localPath;
+                
+                if (result.driveUrl) {
+                    rep.driveUrl = result.driveUrl;
+                    rep.driveFileId = result.driveFileId;
+                }
+            }
+        } catch (pdfError) {
+            console.error(`${reportType} PDF error:`, pdfError);
+        }
+    }
+    
+    if (reports.some(r => r.driveUrl)) {
+        showToast('PDF загружены в Drive!', 'success');
+        const firstDriveUrl = reports.find(r => r.driveUrl)?.driveUrl;
+        if (firstDriveUrl) {
+            navigator.clipboard.writeText(firstDriveUrl);
+        }
+    } else if (reports.some(r => r.localPdfPath)) {
+        showToast('PDF сохранены локально', 'info');
+    }
+}
+// ---------------------------------------------------
+
+updateProgress('Отчёт готов!', 95);
+
+appState.reports.unshift(...reports);
+await saveData();
+
+updateProgress('Завершено!', 100);
+
+clearImages();
+updateUI();
+
+setTimeout(() => {
+    document.getElementById('progress-section').classList.add('hidden');
+    document.getElementById('generate-section').classList.remove('hidden');
+    showReportPage(report.id);
+}, 500);
+
         
     } catch (error) {
         console.error('Generation error:', error);
@@ -716,28 +1181,41 @@ async function generateReport() {
 }
 
 function getSystemPrompt() {
-    return `Ты эксперт по анализу китайских отчётов об автомобилях. Извлеки ВСЮ информацию с изображений и верни в JSON формате.
+    return `Ты — эксперт по анализу автомобилей. Проанализируй фотографии из истории обслуживания автомобиля и создай детальный отчёт в формате JSON.
 
-ВАЖНО: Возвращай ТОЛЬКО JSON, без markdown, без комментариев!
+ВАЖНО: Отчёт должен быть максимально подробным и информативным.
+
+Формат JSON (строго соблюдай структуру):
 
 {
-  "brand": "Марка авто на русском",
-  "model": "Полная модель",
-  "vin": "VIN номер (полный или частичный)",
+  "brand": "Марка",
+  "model": "Модель",
+  "vin": "VIN номер",
   "fuelType": "Тип топлива",
-  "queryDate": "Дата запроса отчёта",
-  "rating": "Оценка состояния (число, например 4.9)",
-  "componentClass": "Класс узлов (A/B/C)",
+  "queryDate": "YYYY-MM-DD",
+  
+  "rating": 4.9,
+  "componentClass": "A/B/C",
   "mileageAnomalies": "Не обнаружено / Обнаружено",
-  "lastMileage": "Последний пробег (только число в км)",
-  "lastMileageDate": "Дата последнего пробега (YYYY-MM)",
-  "maintenanceHabits": "Привычки обслуживания (Отличные/Хорошие/Удовлетворительные)",
-  "lastMaintenanceDate": "Дата последнего ТО",
+  
+  "lastMileage": "11186 км",
+  "lastMileageDate": "2024-09",
+  "estimatedCurrentMileage": "16202 км",
+  "avgYearlyMileage": "4377 км/год",
+  "mileageAssessment": "очень маленький / нормальный / большой",
+  
+  "maintenanceHabits": "Отличные / Хорошие / Удовлетворительные",
+  "maintenanceFrequency": "0.8 раза в год",
+  "lastMaintenanceDate": "2024-09-01",
+  "yearsWithoutDealer": "1.3 года",
+  "lastDealerVisit": "2024-09-01",
+  
   "safetyChecks": {
-    "accident": "5.0",
-    "fire": "5.0",
-    "flood": "5.0"
+    "accident": 5.0,
+    "fire": 5.0,
+    "flood": 5.0
   },
+  
   "components": {
     "airbags": {"status": "ok", "note": ""},
     "seatbelts": {"status": "ok", "note": ""},
@@ -745,66 +1223,117 @@ function getSystemPrompt() {
     "suspension": {"status": "ok", "note": ""},
     "steering": {"status": "ok", "note": ""},
     "brakes": {"status": "ok", "note": ""},
-    "airConditioner": {"status": "ok/problem", "note": "", "date": "", "description": ""}
+    "airConditioner": {"status": "problem", "date": "06/2023", "description": "Проверка протечек в испарителе кондиционера"}
   },
+  
+  "bodyRepairMap": {
+    "frontPart": "без аномалий",
+    "frontRight": "без аномалий",
+    "middleRight": "без аномалий",
+    "rearRight": "без аномалий",
+    "rearPart": "без аномалий",
+    "rearLeft": "без аномалий",
+    "middleLeft": "без аномалий",
+    "frontLeft": "без аномалий",
+    "roof": "без аномалий",
+    "bottom": "без аномалий",
+    "interior": "без аномалий",
+    "engineTransmission": "без аномалий",
+    "electronics": "без аномалий",
+    "totalRepairZones": 0
+  },
+  
+  "frameCheck": {
+    "bodyFrame": "Не обнаружено аномалий",
+    "reinforcedElements": "Не обнаружено аномалий"
+  },
+  
   "mileageHistory": [
-    {"date": "2022-02", "mileage": "9", "status": "Первое посещение дилера"}
+    {"date": "2022-02", "mileage": "9 км", "status": "Первое посещение дилера"},
+    {"date": "2022-07", "mileage": "2442 км", "status": "Нормальные данные"}
   ],
+  
   "mileageSummary": {
-    "maxMileage": "число",
-    "anomalies": "0",
-    "estimatedCurrent": "число",
-    "avgYearly": "число"
+    "maxMileage": "11186 км",
+    "anomalies": 0,
+    "estimatedCurrent": "16202 км",
+    "avgYearly": "4377 км/год"
   },
-  "maintenanceFrequency": "0.8",
-  "lastDealerVisit": "дата",
-  "yearsWithoutDealer": "число",
+  
   "serviceHistory": {
     "period": "2022.02.12 — 2024.09.01",
-    "totalVisits": "8",
-    "repairs": "5",
-    "maintenance": "3",
+    "totalVisits": 8,
+    "repairs": 5,
+    "maintenance": 3,
     "records": [
       {
         "date": "02/2022",
-        "mileage": "7",
+        "mileage": "7 км",
         "description": "Предпродажная подготовка PDI",
         "materials": []
+      },
+      {
+        "date": "07/2022",
+        "mileage": "2442 км",
+        "description": "Первое ТО, регламентное обслуживание + замена масла",
+        "materials": ["Масляный фильтр", "Масло 0W-20 (4L)", "Воздушный фильтр"]
       }
     ]
   },
+  
   "vehicleInfo": {
-    "year": "2021",
-    "engineVolume": "1395",
-    "power": "110",
-    "transmission": "DCT 7-ступ робот",
-    "dimensions": {"length": "4343", "width": "1815", "height": "1458"},
-    "weight": "1400",
-    "production": "Китай"
+    "year": 2021,
+    "brand": "Audi",
+    "model": "A3 Sportback 35 TFSI",
+    "vin": "LFV2B*****95",
+    "bodyColor": "",
+    "vehicleType": "Легковой",
+    "fuelType": "Бензин",
+    "emissionStandard": "",
+    "weight": "1400 кг",
+    "engineVolume": "1395 см³",
+    "engineNumber": "T3****",
+    "power": "110 kW",
+    "dimensions": {
+      "length": "4343 мм",
+      "width": "1815 мм",
+      "height": "1458 мм"
+    },
+    "transmission": "DCT 7-ступ. робот",
+    "production": "Китай (локальная сборка)"
   },
+  
   "ownerInfo": {
     "ownerType": "Частное лицо",
     "registrationTime": "3-4 года",
-    "ownersCount": "2",
-    "usage": "Личное"
+    "ownersCount": 2,
+    "usage": "Личное (не такси)",
+    "newEnergy": "Нет"
   },
+  
   "insuranceInfo": {
-    "osago": "действует",
-    "kasko": "действует",
-    "claims": "0",
-    "maxDamage": "0"
+    "osago": "Действует",
+    "kasko": "Действует",
+    "osagoRenewedContinuously": false,
+    "kaskoRenewedContinuously": false,
+    "claims": 0,
+    "thirdPartyIncidents": 0,
+    "maxDamage": "0 ₽",
+    "risks": "Нет особых рекомендаций"
   },
+  
   "conclusion": {
-    "accidents": "нет",
-    "bodyAnomalies": "нет",
-    "insuranceRepairs": "нет",
-    "componentProblems": "нет",
-    "recommendation": "Автомобиль в хорошем состоянии"
+    "accidents": "Не зафиксировано",
+    "bodyAnomalies": "Нет",
+    "insuranceRepairs": "Нет",
+    "componentProblems": "Не обнаружено",
+    "recommendation": "Нет особых замечаний. Автомобиль в хорошем состоянии по базе данных."
   }
 }
 
-Извлеки максимум информации. Если поле не найдено - поставь null. Возвращай ТОЛЬКО JSON!`;
+Анализируй ВСЕ детали на фотографиях. Если данных нет — используй "Нет информации". Строго JSON!`;
 }
+
 
 // Вызов OpenAI API
 async function callOpenAIAPI(apiKey, systemPrompt, userPrompt) {
@@ -816,14 +1345,14 @@ async function callOpenAIAPI(apiKey, systemPrompt, userPrompt) {
         }
     }));
     
-    const response = await fetch('https://www.genspark.ai/api/llm_proxy/v1/chat/completions', {
+    const response = await fetch('https://api.openai.com/v1/chat/completions', {
         method: 'POST',
         headers: {
             'Content-Type': 'application/json',
             'Authorization': `Bearer ${apiKey}`
         },
         body: JSON.stringify({
-            model: 'gpt-5',
+            model: 'gpt-4o-mini',
             messages: [
                 { role: 'system', content: systemPrompt },
                 { 
@@ -846,6 +1375,138 @@ async function callOpenAIAPI(apiKey, systemPrompt, userPrompt) {
     const data = await response.json();
     return data.choices[0].message.content;
 }
+async function openDriveLink() {
+    if (!appState.currentReport) return;
+    
+    // Если уже есть ссылка - открываем
+    if (appState.currentReport.driveUrl) {
+        if (isElectron) {
+            ipcRenderer.invoke('open-external', appState.currentReport.driveUrl);
+        } else {
+            window.open(appState.currentReport.driveUrl, '_blank');
+        }
+        return;
+    }
+    
+    // Если ссылки нет - загружаем в Drive
+    if (!isElectron) {
+        showToast('Загрузка в Drive доступна только в десктоп версии', 'warning');
+        return;
+    }
+    
+    try {
+        showToast('Проверка авторизации Google Drive...', 'info');
+        
+        const isAuthorized = await ipcRenderer.invoke('check-google-auth');
+        
+        if (!isAuthorized) {
+            const authConfirm = confirm('Google Drive не авторизован. Авторизовать сейчас?');
+            if (authConfirm) {
+                const result = await ipcRenderer.invoke('authorize-google');
+                if (!result.success) {
+                    showToast('Ошибка авторизации', 'error');
+                    return;
+                }
+                showToast('Авторизация успешна!', 'success');
+            } else {
+                return;
+            }
+        }
+        
+        showToast('Загрузка PDF в Google Drive...', 'info');
+        
+        const pdfFilename = `${sanitizeForFilename(appState.currentReport.vin)}_${formatDateForFile(appState.currentReport.createdAt)}.pdf`;
+        
+        // Если есть локальный файл - используем его
+        if (appState.currentReport.localPdfPath) {
+            const result = await ipcRenderer.invoke('upload-existing-pdf-to-drive', {
+                localPath: appState.currentReport.localPdfPath,
+                filename: pdfFilename
+            });
+            
+            if (result.success) {
+                appState.currentReport.driveUrl = result.url;
+                appState.currentReport.driveFileId = result.fileId;
+                await saveData();
+                
+                navigator.clipboard.writeText(result.url);
+                showToast('PDF загружен в Drive! Ссылка скопирована', 'success');
+                
+                ipcRenderer.invoke('open-external', result.url);
+            } else {
+                throw new Error(result.error || 'Ошибка загрузки');
+            }
+        } else {
+            // Генерируем PDF заново и загружаем
+            const result = await ipcRenderer.invoke('save-and-upload-pdf', {
+                htmlContent: appState.currentReport.htmlContent,
+                filename: pdfFilename
+            });
+            
+            if (result.success) {
+                appState.currentReport.localPdfPath = result.localPath;
+                
+                if (result.driveUrl) {
+                    appState.currentReport.driveUrl = result.driveUrl;
+                    appState.currentReport.driveFileId = result.fileId;
+                    await saveData();
+                    
+                    navigator.clipboard.writeText(result.driveUrl);
+                    showToast('PDF загружен в Drive! Ссылка скопирована', 'success');
+                    
+                    ipcRenderer.invoke('open-external', result.driveUrl);
+                } else {
+                    showToast('PDF сохранён, но не удалось загрузить в Drive', 'warning');
+                }
+            } else {
+                throw new Error(result.error || 'Ошибка создания PDF');
+            }
+        }
+    } catch (error) {
+        console.error('Drive upload error:', error);
+        
+        // Если ошибка токена - предлагаем переавторизоваться
+        if (error.message.includes('ECONNRESET') || error.message.includes('token') || error.message.includes('401')) {
+            const reauth = confirm('Проблема с авторизацией Google Drive. Переавторизовать?');
+            if (reauth) {
+                try {
+                    const result = await ipcRenderer.invoke('authorize-google');
+                    if (result.success) {
+                        showToast('Повторите попытку загрузки', 'info');
+                    }
+                } catch (e) {
+                    showToast('Ошибка авторизации', 'error');
+                }
+            }
+        } else {
+            showToast(`Ошибка: ${error.message}`, 'error');
+        }
+    }
+}
+
+
+
+function openLinkAndCopy(url) {
+    navigator.clipboard.writeText(url);
+    showToast('Ссылка скопирована!', 'success');
+    if (isElectron) {
+        ipcRenderer.invoke('open-external', url);
+    } else {
+        window.open(url, '_blank');
+    }
+}
+
+function copyReportLink() {
+    if (appState.currentReport?.driveUrl) {
+        navigator.clipboard.writeText(appState.currentReport.driveUrl);
+        showToast('Ссылка на Drive скопирована!', 'success');
+    } else {
+        showToast('Файл ещё не загружен в Drive', 'warning');
+    }
+}
+
+
+
 
 // Вызов Gemini API
 async function callGeminiAPI(apiKey, systemPrompt, userPrompt) {
@@ -860,7 +1521,7 @@ async function callGeminiAPI(apiKey, systemPrompt, userPrompt) {
         };
     });
     
-    const response = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash-preview-05-20:generateContent?key=${apiKey}`, {
+    const response = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=${apiKey}`, {
         method: 'POST',
         headers: {
             'Content-Type': 'application/json'
@@ -874,7 +1535,7 @@ async function callGeminiAPI(apiKey, systemPrompt, userPrompt) {
             }],
             generationConfig: {
                 temperature: 0.2,
-                maxOutputTokens: 8192
+                maxOutputTokens: 16384
             }
         })
     });
@@ -1011,54 +1672,115 @@ function generateHTMLReport(data) {
     </div>
     ` : ''}
     
-    <!-- 3. Пробег -->
-    ${data.mileageHistory && data.mileageHistory.length > 0 ? `
-    <div style="margin-bottom: 25px; background: #f8f9fa; border-radius: 12px; padding: 20px;">
-        <h2 style="font-size: 18px; font-weight: bold; color: #2a2a5a; margin: 0 0 15px 0; padding-bottom: 10px; border-bottom: 2px solid #e0e0e0;">3. Пробег (хронология)</h2>
-        <table style="width: 100%; border-collapse: collapse;">
-            <thead>
-                <tr style="background: #e9ecef;">
-                    <th style="padding: 12px; text-align: left; font-weight: 600; color: #495057;">Дата</th>
-                    <th style="padding: 12px; text-align: left; font-weight: 600; color: #495057;">Пробег</th>
-                    <th style="padding: 12px; text-align: left; font-weight: 600; color: #495057;">Статус</th>
-                </tr>
-            </thead>
-            <tbody>
-                ${data.mileageHistory.map(m => `
+    <!-- 2.5. Карта ремонта деталей -->
+${data.bodyRepairMap ? `
+<div style="page-break-inside: avoid; margin-bottom: 25px; background: #f8f9fa; border-radius: 12px; padding: 20px;">
+    <h2 style="font-size: 18px; font-weight: bold; color: #2a2a5a; margin: 0 0 15px 0; padding-bottom: 10px; border-bottom: 2px solid #e0e0e0;">Карта ремонта / замены деталей</h2>
+    
+    <div style="display: grid; grid-template-columns: repeat(3, 1fr); gap: 10px; margin-bottom: 15px;">
+        ${Object.entries(data.bodyRepairMap).filter(([key]) => key !== 'totalRepairZones').map(([zone, status]) => {
+            const zoneNames = {
+                frontPart: 'Передняя часть',
+                frontRight: 'Передняя правая',
+                middleRight: 'Средняя правая',
+                rearRight: 'Задняя правая',
+                rearPart: 'Задняя часть',
+                rearLeft: 'Задняя левая',
+                middleLeft: 'Средняя левая',
+                frontLeft: 'Передняя левая',
+                roof: 'Крыша',
+                bottom: 'Днище',
+                interior: 'Салон',
+                engineTransmission: 'Двигатель/КПП',
+                electronics: 'Электрика'
+            };
+            const isOk = status.includes('без аномалий') || status === 'ok';
+            return `
+                <div style="background: ${isOk ? '#d4edda' : '#f8d7da'}; border-radius: 8px; padding: 10px; text-align: center; font-size: 11px;">
+                    <div style="font-weight: bold; margin-bottom: 5px; color: ${isOk ? '#28a745' : '#dc3545'};">
+                        ${isOk ? '✓' : '✗'} ${zoneNames[zone] || zone}
+                    </div>
+                    <div style="color: #666; font-size: 10px;">${status}</div>
+                </div>
+            `;
+        }).join('')}
+    </div>
+    
+    <div style="background: white; padding: 15px; border-radius: 8px; text-align: center;">
+        <strong>Всего зон с ремонтом:</strong> ${data.bodyRepairMap.totalRepairZones || 0}
+    </div>
+</div>
+` : ''}
+
+<!-- 2.6. Проверка каркаса -->
+${data.frameCheck ? `
+<div style="margin-bottom: 25px; background: #f8f9fa; border-radius: 12px; padding: 20px;">
+    <h2 style="font-size: 18px; font-weight: bold; color: #2a2a5a; margin: 0 0 15px 0; padding-bottom: 10px; border-bottom: 2px solid #e0e0e0;">Проверка каркаса кузова</h2>
+    
+    <div style="display: grid; grid-template-columns: repeat(2, 1fr); gap: 15px;">
+        <div style="background: white; padding: 15px; border-radius: 8px;">
+            <strong style="color: #666;">Каркас кузова:</strong>
+            <p style="margin: 5px 0;">${data.frameCheck.bodyFrame}</p>
+        </div>
+        <div style="background: white; padding: 15px; border-radius: 8px;">
+            <strong style="color: #666;">Усиленные элементы:</strong>
+            <p style="margin: 5px 0;">${data.frameCheck.reinforcedElements}</p>
+        </div>
+    </div>
+</div>
+` : ''}
+
+
+    <!-- 3. История пробега -->
+${data.mileageHistory && data.mileageHistory.length > 0 ? `
+<div style="page-break-inside: avoid; margin-bottom: 25px; background: #f8f9fa; border-radius: 12px; padding: 20px;">
+    <h2 style="font-size: 18px; font-weight: bold; color: #2a2a5a; margin: 0 0 15px 0; padding-bottom: 10px; border-bottom: 2px solid #e0e0e0;">3. История пробега</h2>
+    
+    <table style="width: 100%; border-collapse: collapse;">
+        <thead>
+            <tr style="background: #e9ecef;">
+                <th style="padding: 12px; text-align: left; font-weight: 600; color: #495057;">Дата</th>
+                <th style="padding: 12px; text-align: left; font-weight: 600; color: #495057;">Пробег</th>
+                <th style="padding: 12px; text-align: left; font-weight: 600; color: #495057;">Статус</th>
+            </tr>
+        </thead>
+        <tbody>
+            ${data.mileageHistory.map(m => `
                 <tr style="border-bottom: 1px solid #e0e0e0;">
-                    <td style="padding: 12px;">${m.date || '—'}</td>
-                    <td style="padding: 12px;">${m.mileage ? `${m.mileage} км` : '—'}</td>
-                    <td style="padding: 12px;">${m.status || '—'}</td>
+                    <td style="padding: 12px;">${m.date}</td>
+                    <td style="padding: 12px;">${m.mileage ? m.mileage : '—'}</td>
+                    <td style="padding: 12px;">${m.status}</td>
                 </tr>
-                `).join('')}
-            </tbody>
-        </table>
-        
-        ${data.mileageSummary ? `
+            `).join('')}
+        </tbody>
+    </table>
+    
+    ${data.mileageSummary ? `
         <div style="margin-top: 20px; background: white; padding: 15px; border-radius: 8px;">
-            <h4 style="margin: 0 0 10px 0; color: #666; font-size: 14px;">Общее</h4>
+            <h4 style="margin: 0 0 10px 0; color: #666; font-size: 14px;">Сводка по пробегу</h4>
             <div style="display: grid; grid-template-columns: repeat(2, 1fr); gap: 15px;">
                 <div>
-                    <span style="font-size: 11px; color: #888;">Макс. пробег</span>
-                    <p style="font-size: 14px; font-weight: 600; margin: 3px 0 0 0;">${data.mileageSummary.maxMileage || '—'} км</p>
+                    <span style="font-size: 11px; color: #888;">Максимальный зафиксированный:</span>
+                    <p style="font-size: 14px; font-weight: 600; margin: 3px 0 0 0;">${data.mileageSummary.maxMileage}</p>
                 </div>
                 <div>
-                    <span style="font-size: 11px; color: #888;">Аномалий</span>
-                    <p style="font-size: 14px; font-weight: 600; margin: 3px 0 0 0;">${data.mileageSummary.anomalies || '0'}</p>
+                    <span style="font-size: 11px; color: #888;">Аномалий:</span>
+                    <p style="font-size: 14px; font-weight: 600; margin: 3px 0 0 0;">${data.mileageSummary.anomalies} шт.</p>
                 </div>
                 <div>
-                    <span style="font-size: 11px; color: #888;">Прогноз текущего</span>
-                    <p style="font-size: 14px; font-weight: 600; margin: 3px 0 0 0;">${data.mileageSummary.estimatedCurrent || '—'} км</p>
+                    <span style="font-size: 11px; color: #888;">Прогнозируемый текущий:</span>
+                    <p style="font-size: 14px; font-weight: 600; margin: 3px 0 0 0;">${data.mileageSummary.estimatedCurrent || data.estimatedCurrentMileage || '—'}</p>
                 </div>
                 <div>
-                    <span style="font-size: 11px; color: #888;">Среднегодовой</span>
-                    <p style="font-size: 14px; font-weight: 600; margin: 3px 0 0 0;">${data.mileageSummary.avgYearly || '—'} км/год</p>
+                    <span style="font-size: 11px; color: #888;">Среднегодовой:</span>
+                    <p style="font-size: 14px; font-weight: 600; margin: 3px 0 0 0;">${data.mileageSummary.avgYearly || data.avgYearlyMileage || '—'} ${data.mileageAssessment ? '(' + data.mileageAssessment + ')' : ''}</p>
                 </div>
             </div>
         </div>
-        ` : ''}
-    </div>
     ` : ''}
+</div>
+` : ''}
+
     
     <!-- 4. Привычки обслуживания -->
     <div style="margin-bottom: 25px; background: #f8f9fa; border-radius: 12px; padding: 20px;">
@@ -1083,153 +1805,154 @@ function generateHTMLReport(data) {
         </div>
     </div>
     
-    <!-- 5. История обслуживания -->
-    ${data.serviceHistory && data.serviceHistory.records && data.serviceHistory.records.length > 0 ? `
-    <div style="margin-bottom: 25px; background: #f8f9fa; border-radius: 12px; padding: 20px;">
-        <h2 style="font-size: 18px; font-weight: bold; color: #2a2a5a; margin: 0 0 15px 0; padding-bottom: 10px; border-bottom: 2px solid #e0e0e0;">5. История обслуживания</h2>
-        <div style="margin-bottom: 20px; color: #666; font-size: 14px;">
-            <p style="margin: 5px 0;"><strong>Период:</strong> ${data.serviceHistory.period || '—'}</p>
-            <p style="margin: 5px 0;"><strong>Всего:</strong> ${data.serviceHistory.totalVisits || '—'} посещений (${data.serviceHistory.repairs || '—'} ремонтов, ${data.serviceHistory.maintenance || '—'} ТО)</p>
-        </div>
-        <h4 style="margin-bottom: 15px; font-size: 14px;">📌 Детализация записей</h4>
+<!-- 5. История обслуживания -->
+${data.serviceHistory && data.serviceHistory.records && data.serviceHistory.records.length > 0 ? `
+<div style="margin-bottom: 25px; background: #f8f9fa; border-radius: 12px; padding: 20px;">
+    <h2 style="font-size: 18px; font-weight: bold; color: #2a2a5a; margin: 0 0 15px 0; padding-bottom: 10px; border-bottom: 2px solid #e0e0e0;">5. История обслуживания</h2>
+    
+    <div style="margin-bottom: 15px; color: #666; font-size: 13px;">
+        <p style="margin: 3px 0;"><strong>Период:</strong> ${data.serviceHistory.period}</p>
+        <p style="margin: 3px 0;"><strong>Всего визитов:</strong> ${data.serviceHistory.totalVisits} (${data.serviceHistory.repairs} ремонтов, ${data.serviceHistory.maintenance} ТО)</p>
+    </div>
+    
+    <div style="display: grid; grid-template-columns: repeat(2, 1fr); gap: 10px;">
         ${data.serviceHistory.records.map(r => `
-        <div style="background: white; border-radius: 10px; padding: 15px; margin-bottom: 12px; border-left: 4px solid #4a4a8a;">
-            <div style="display: flex; justify-content: space-between; align-items: center;">
-                <span style="font-weight: bold; color: #4a4a8a; font-size: 14px;">${r.date || '—'}</span>
-                <span style="color: #666; font-size: 13px;">${r.mileage ? `${r.mileage} км` : ''}</span>
+            <div style="background: white; border-radius: 8px; padding: 10px; border-left: 3px solid #4a4a8a; font-size: 11px;">
+                <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 5px;">
+                    <span style="font-weight: bold; color: #4a4a8a;">${r.date}</span>
+                    <span style="color: #666; font-size: 10px;">${r.mileage ? r.mileage + ' км' : ''}</span>
+                </div>
+                ${r.description ? `<div style="color: #333; font-size: 10px;"><strong>Работы:</strong> ${r.description}</div>` : ''}
+                ${r.materials && r.materials.length > 0 ? `
+                    <div style="margin-top: 5px; color: #666; font-size: 10px;">
+                        <strong>Материалы:</strong> ${r.materials.join(', ')}
+                    </div>
+                ` : ''}
             </div>
-            ${r.description ? `<div style="margin-top: 8px; color: #333; font-size: 13px;"><strong>Описание:</strong> ${r.description}</div>` : ''}
-            ${r.materials && r.materials.length > 0 ? `
-            <div style="margin-top: 8px; padding-left: 15px; color: #666; font-size: 12px;">
-                <strong>Материалы:</strong>
-                <ul style="margin: 5px 0; padding-left: 20px;">
-                    ${r.materials.map(m => `<li>${m}</li>`).join('')}
-                </ul>
-            </div>
-            ` : ''}
-        </div>
         `).join('')}
     </div>
-    ` : ''}
+</div>
+` : ''}
+
     
-    <!-- 6. Информация об автомобиле -->
-    ${data.vehicleInfo ? `
-    <div style="margin-bottom: 25px; background: #f8f9fa; border-radius: 12px; padding: 20px;">
-        <h2 style="font-size: 18px; font-weight: bold; color: #2a2a5a; margin: 0 0 15px 0; padding-bottom: 10px; border-bottom: 2px solid #e0e0e0;">6. Информация об автомобиле</h2>
-        <div style="display: grid; grid-template-columns: repeat(2, 1fr); gap: 15px;">
-            <div>
-                <span style="font-size: 11px; color: #888;">Год выпуска</span>
-                <p style="font-size: 14px; font-weight: 600; margin: 3px 0 0 0;">${data.vehicleInfo.year || '—'}</p>
-            </div>
-            <div>
-                <span style="font-size: 11px; color: #888;">Объём двигателя</span>
-                <p style="font-size: 14px; font-weight: 600; margin: 3px 0 0 0;">${data.vehicleInfo.engineVolume ? `${data.vehicleInfo.engineVolume} мл` : '—'}</p>
-            </div>
-            <div>
-                <span style="font-size: 11px; color: #888;">Мощность</span>
-                <p style="font-size: 14px; font-weight: 600; margin: 3px 0 0 0;">${data.vehicleInfo.power ? `${data.vehicleInfo.power} kW` : '—'}</p>
-            </div>
-            <div>
-                <span style="font-size: 11px; color: #888;">КПП</span>
-                <p style="font-size: 14px; font-weight: 600; margin: 3px 0 0 0;">${data.vehicleInfo.transmission || '—'}</p>
-            </div>
-            <div>
-                <span style="font-size: 11px; color: #888;">Масса</span>
-                <p style="font-size: 14px; font-weight: 600; margin: 3px 0 0 0;">${data.vehicleInfo.weight ? `${data.vehicleInfo.weight} кг` : '—'}</p>
-            </div>
-            <div>
-                <span style="font-size: 11px; color: #888;">Производство</span>
-                <p style="font-size: 14px; font-weight: 600; margin: 3px 0 0 0;">${data.vehicleInfo.production || '—'}</p>
+    <!-- 6-9. Компактная информация -->
+<div style="page-break-inside: avoid; break-inside: avoid;">
+    <div style="display: grid; grid-template-columns: repeat(2, 1fr); gap: 15px; margin-bottom: 25px;">
+        
+        <!-- 6. Характеристики автомобиля -->
+        ${data.vehicleInfo ? `
+        <div style="background: #f8f9fa; border-radius: 12px; padding: 15px;">
+            <h3 style="font-size: 14px; font-weight: bold; color: #2a2a5a; margin: 0 0 10px 0; padding-bottom: 8px; border-bottom: 2px solid #e0e0e0;">6. Характеристики ТС</h3>
+            <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 8px; font-size: 11px;">
+                <div><span style="color: #888;">Год:</span> <p style="font-weight: 600; margin: 2px 0;">${data.vehicleInfo.year}</p></div>
+                <div><span style="color: #888;">Объём двигателя:</span> <p style="font-weight: 600; margin: 2px 0;">${data.vehicleInfo.engineVolume ? data.vehicleInfo.engineVolume + ' см³' : ''}</p></div>
+                <div><span style="color: #888;">Мощность:</span> <p style="font-weight: 600; margin: 2px 0;">${data.vehicleInfo.power ? data.vehicleInfo.power + ' kW' : ''}</p></div>
+                <div><span style="color: #888;">КПП:</span> <p style="font-weight: 600; margin: 2px 0;">${data.vehicleInfo.transmission}</p></div>
+                <div><span style="color: #888;">Масса:</span> <p style="font-weight: 600; margin: 2px 0;">${data.vehicleInfo.weight ? data.vehicleInfo.weight + ' кг' : ''}</p></div>
+                <div><span style="color: #888;">Производство:</span> <p style="font-weight: 600; margin: 2px 0;">${data.vehicleInfo.production}</p></div>
             </div>
         </div>
-    </div>
-    ` : ''}
-    
-    <!-- 7. Информация о владельцах -->
-    ${data.ownerInfo ? `
-    <div style="margin-bottom: 25px; background: #f8f9fa; border-radius: 12px; padding: 20px;">
-        <h2 style="font-size: 18px; font-weight: bold; color: #2a2a5a; margin: 0 0 15px 0; padding-bottom: 10px; border-bottom: 2px solid #e0e0e0;">7. Информация о владельцах</h2>
-        <div style="display: grid; grid-template-columns: repeat(2, 1fr); gap: 15px;">
-            <div>
-                <span style="font-size: 11px; color: #888;">Тип собственника</span>
-                <p style="font-size: 14px; font-weight: 600; margin: 3px 0 0 0;">${data.ownerInfo.ownerType || '—'}</p>
-            </div>
-            <div>
-                <span style="font-size: 11px; color: #888;">Срок с регистрации</span>
-                <p style="font-size: 14px; font-weight: 600; margin: 3px 0 0 0;">${data.ownerInfo.registrationTime || '—'}</p>
-            </div>
-            <div>
-                <span style="font-size: 11px; color: #888;">Количество владельцев</span>
-                <p style="font-size: 14px; font-weight: 600; margin: 3px 0 0 0;">${data.ownerInfo.ownersCount || '—'}</p>
-            </div>
-            <div>
-                <span style="font-size: 11px; color: #888;">Использование</span>
-                <p style="font-size: 14px; font-weight: 600; margin: 3px 0 0 0;">${data.ownerInfo.usage || '—'}</p>
+        ` : ''}
+        
+        <!-- 7. Информация о владельце -->
+        ${data.ownerInfo ? `
+        <div style="background: #f8f9fa; border-radius: 12px; padding: 15px;">
+            <h3 style="font-size: 14px; font-weight: bold; color: #2a2a5a; margin: 0 0 10px 0; padding-bottom: 8px; border-bottom: 2px solid #e0e0e0;">7. Владелец</h3>
+            <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 8px; font-size: 11px;">
+                <div><span style="color: #888;">Тип:</span> <p style="font-weight: 600; margin: 2px 0;">${data.ownerInfo.ownerType}</p></div>
+                <div><span style="color: #888;">Регистрация:</span> <p style="font-weight: 600; margin: 2px 0;">${data.ownerInfo.registrationTime}</p></div>
+                <div><span style="color: #888;">Владельцев:</span> <p style="font-weight: 600; margin: 2px 0;">${data.ownerInfo.ownersCount}</p></div>
+                <div><span style="color: #888;">Использование:</span> <p style="font-weight: 600; margin: 2px 0;">${data.ownerInfo.usage}</p></div>
             </div>
         </div>
-    </div>
-    ` : ''}
-    
-    <!-- 8. Страховая информация -->
-    ${data.insuranceInfo ? `
-    <div style="margin-bottom: 25px; background: #f8f9fa; border-radius: 12px; padding: 20px;">
-        <h2 style="font-size: 18px; font-weight: bold; color: #2a2a5a; margin: 0 0 15px 0; padding-bottom: 10px; border-bottom: 2px solid #e0e0e0;">8. Страховая информация</h2>
-        <div style="display: grid; grid-template-columns: repeat(2, 1fr); gap: 15px;">
-            <div>
-                <span style="font-size: 11px; color: #888;">ОСАГО</span>
-                <p style="font-size: 14px; font-weight: 600; color: ${data.insuranceInfo.osago === 'действует' ? '#28a745' : '#333'}; margin: 3px 0 0 0;">${data.insuranceInfo.osago || '—'}</p>
-            </div>
-            <div>
-                <span style="font-size: 11px; color: #888;">КАСКО</span>
-                <p style="font-size: 14px; font-weight: 600; color: ${data.insuranceInfo.kasko === 'действует' ? '#28a745' : '#333'}; margin: 3px 0 0 0;">${data.insuranceInfo.kasko || '—'}</p>
-            </div>
-            <div>
-                <span style="font-size: 11px; color: #888;">Страховые случаи</span>
-                <p style="font-size: 14px; font-weight: 600; margin: 3px 0 0 0;">${data.insuranceInfo.claims || '0'}</p>
-            </div>
-            <div>
-                <span style="font-size: 11px; color: #888;">Макс. ущерб</span>
-                <p style="font-size: 14px; font-weight: 600; margin: 3px 0 0 0;">${data.insuranceInfo.maxDamage || '0'} юаней</p>
+        ` : ''}
+        
+        <!-- 8. Информация о страховании -->
+        ${data.insuranceInfo ? `
+        <div style="background: #f8f9fa; border-radius: 12px; padding: 15px;">
+            <h3 style="font-size: 14px; font-weight: bold; color: #2a2a5a; margin: 0 0 10px 0; padding-bottom: 8px; border-bottom: 2px solid #e0e0e0;">8. Страхование</h3>
+            <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 8px; font-size: 11px;">
+                <div><span style="color: #888;">ОСАГО:</span> <p style="font-weight: 600; color: ${data.insuranceInfo.osago ? '#28a745' : '#333'}; margin: 2px 0;">${data.insuranceInfo.osago}</p></div>
+                <div><span style="color: #888;">КАСКО:</span> <p style="font-weight: 600; color: ${data.insuranceInfo.kasko ? '#28a745' : '#333'}; margin: 2px 0;">${data.insuranceInfo.kasko}</p></div>
+                <div><span style="color: #888;">Страх. случаев:</span> <p style="font-weight: 600; margin: 2px 0;">${data.insuranceInfo.claims} шт.</p></div>
+                <div><span style="color: #888;">Макс. ущерб:</span> <p style="font-weight: 600; margin: 2px 0;">${data.insuranceInfo.maxDamage} ₽</p></div>
             </div>
         </div>
-    </div>
-    ` : ''}
-    
-    <!-- 9. Итоговое заключение -->
-    ${data.conclusion ? `
-    <div style="margin-bottom: 25px; background: #f8f9fa; border-radius: 12px; padding: 20px;">
-        <h2 style="font-size: 18px; font-weight: bold; color: #2a2a5a; margin: 0 0 15px 0; padding-bottom: 10px; border-bottom: 2px solid #e0e0e0;">9. Итоговое заключение</h2>
-        <div style="background: linear-gradient(135deg, #e8f5e9, #c8e6c9); border-radius: 12px; padding: 20px;">
-            <div style="display: flex; align-items: center; gap: 10px; margin-bottom: 10px;">
-                <span style="color: ${data.conclusion.accidents === 'нет' ? '#28a745' : '#dc3545'}; font-size: 18px;">${data.conclusion.accidents === 'нет' ? '✔' : '❌'}</span>
-                <span>Аварии: ${data.conclusion.accidents || 'не зафиксировано'}</span>
-            </div>
-            <div style="display: flex; align-items: center; gap: 10px; margin-bottom: 10px;">
-                <span style="color: ${data.conclusion.bodyAnomalies === 'нет' ? '#28a745' : '#dc3545'}; font-size: 18px;">${data.conclusion.bodyAnomalies === 'нет' ? '✔' : '❌'}</span>
-                <span>Аномалии кузова: ${data.conclusion.bodyAnomalies || 'нет'}</span>
-            </div>
-            <div style="display: flex; align-items: center; gap: 10px; margin-bottom: 10px;">
-                <span style="color: ${data.conclusion.insuranceRepairs === 'нет' ? '#28a745' : '#dc3545'}; font-size: 18px;">${data.conclusion.insuranceRepairs === 'нет' ? '✔' : '❌'}</span>
-                <span>Страховые ремонты: ${data.conclusion.insuranceRepairs || 'нет'}</span>
-            </div>
-            <div style="display: flex; align-items: center; gap: 10px; margin-bottom: 10px;">
-                <span style="color: ${data.conclusion.componentProblems === 'нет' ? '#28a745' : '#dc3545'}; font-size: 18px;">${data.conclusion.componentProblems === 'нет' ? '✔' : '❌'}</span>
-                <span>Проблемы по важным узлам: ${data.conclusion.componentProblems || 'не обнаружено'}</span>
-            </div>
-            <div style="margin-top: 15px; padding-top: 15px; border-top: 1px solid #a5d6a7;">
-                <strong>➡ Рекомендация:</strong> ${data.conclusion.recommendation || 'Нет особых замечаний'}
+        ` : ''}
+        
+        <!-- 9. Итоговая оценка -->
+        ${data.conclusion ? `
+        <div style="background: linear-gradient(135deg, #e8f5e9, #c8e6c9); border-radius: 12px; padding: 15px;">
+            <h3 style="font-size: 14px; font-weight: bold; color: #2a2a5a; margin: 0 0 10px 0; padding-bottom: 8px; border-bottom: 2px solid #a5d6a7;">9. Итоговая оценка</h3>
+            <div style="font-size: 11px;">
+                <div style="display: flex; align-items: center; gap: 8px; margin-bottom: 5px;">
+                    <span style="color: ${data.conclusion.accidents ? '#28a745' : '#dc3545'}; font-size: 16px;">${data.conclusion.accidents ? '✓' : '✗'}</span>
+                    <span>${data.conclusion.accidents}</span>
+                </div>
+                <div style="display: flex; align-items: center; gap: 8px; margin-bottom: 5px;">
+                    <span style="color: ${data.conclusion.bodyAnomalies ? '#28a745' : '#dc3545'}; font-size: 16px;">${data.conclusion.bodyAnomalies ? '✓' : '✗'}</span>
+                    <span>${data.conclusion.bodyAnomalies}</span>
+                </div>
+                <div style="display: flex; align-items: center; gap: 8px; margin-bottom: 5px;">
+                    <span style="color: ${data.conclusion.insuranceRepairs ? '#28a745' : '#dc3545'}; font-size: 16px;">${data.conclusion.insuranceRepairs ? '✓' : '✗'}</span>
+                    <span>${data.conclusion.insuranceRepairs}</span>
+                </div>
+                <div style="display: flex; align-items: center; gap: 8px; margin-bottom: 8px;">
+                    <span style="color: ${data.conclusion.componentProblems ? '#28a745' : '#dc3545'}; font-size: 16px;">${data.conclusion.componentProblems ? '✓' : '✗'}</span>
+                    <span>${data.conclusion.componentProblems}</span>
+                </div>
+                <div style="margin-top: 10px; padding-top: 10px; border-top: 1px solid #a5d6a7; font-size: 12px;">
+                    <strong>Рекомендация:</strong> ${data.conclusion.recommendation}
+                </div>
             </div>
         </div>
-    </div>
-    ` : ''}
-    
-    <!-- Футер -->
-    <div style="text-align: center; color: #999; font-size: 11px; margin-top: 30px; padding-top: 20px; border-top: 1px solid #e0e0e0;">
-        Отчёт сгенерирован автоматически • ${new Date().toLocaleDateString('ru-RU')} ${new Date().toLocaleTimeString('ru-RU')}
+        ` : ''}
+        
     </div>
 </div>
 `;
 }
+
+// Генерация краткого страхового отчёта
+function generateInsuranceReport(data) {
+    const logoSrc = appState.settings.logoBase64 || appState.settings.logoUrl;
+    
+    return `<div class="report-container" style="font-family: 'Segoe UI', Arial, sans-serif; max-width: 900px; margin: 0 auto; color: #333; line-height: 1.6; background: white; padding: 30px;">
+    <div style="display: flex; justify-content: space-between; align-items: flex-start; margin-bottom: 30px; padding-bottom: 20px; border-bottom: 3px solid #4a4a8a;">
+        <div>
+            <h1 style="font-size: 26px; font-weight: bold; color: #2a2a5a; margin: 0;">Страховой отчёт</h1>
+            <p style="font-size: 16px; color: #666; margin-top: 5px;">${data.brand || ''} ${data.model || ''}</p>
+        </div>
+        ${logoSrc ? `<img src="${logoSrc}" alt="Logo" style="max-height: 70px; max-width: 180px; object-fit: contain;">` : ''}
+    </div>
+    
+    <div style="margin-bottom: 25px; background: #f8f9fa; border-radius: 12px; padding: 20px;">
+        <div style="display: grid; grid-template-columns: repeat(2, 1fr); gap: 15px;">
+            <div><span style="font-size: 11px; color: #888;">Марка / Модель</span>
+                <p style="font-size: 15px; font-weight: 600; margin: 5px 0 0 0;">${data.brand || ''} ${data.model || ''}</p></div>
+            <div><span style="font-size: 11px; color: #888;">VIN</span>
+                <p style="font-size: 15px; font-weight: 600; margin: 5px 0 0 0;">${data.vin || ''}</p></div>
+            <div><span style="font-size: 11px; color: #888;">Рейтинг</span>
+                <p style="margin: 5px 0 0 0;"><span style="background: linear-gradient(135deg, #ffd700, #ffb800); color: #333; padding: 4px 12px; border-radius: 12px; font-weight: bold;">★ ${data.rating || ''}</span></p></div>
+            <div><span style="font-size: 11px; color: #888;">Пробег</span>
+                <p style="font-size: 15px; font-weight: 600; margin: 5px 0 0 0;">${data.lastMileage || ''}</p></div>
+        </div>
+    </div>
+    
+    ${data.conclusion ? `
+    <div style="margin-bottom: 25px; background: linear-gradient(135deg, #e8f5e9, #c8e6c9); border-radius: 12px; padding: 20px;">
+        <h2 style="font-size: 18px; font-weight: bold; color: #2a2a5a; margin: 0 0 10px 0;">Заключение</h2>
+        <p style="margin: 5px 0;"><strong>Аварии:</strong> ${data.conclusion.accidents || ''}</p>
+        <p style="margin: 5px 0;"><strong>Рекомендация:</strong> ${data.conclusion.recommendation || ''}</p>
+    </div>
+    ` : ''}
+    
+    <div style="text-align: center; color: #999; font-size: 11px; margin-top: 30px; padding-top: 20px; border-top: 1px solid #e0e0e0;">
+        Отчёт сгенерирован ${new Date().toLocaleDateString('ru-RU')} ${new Date().toLocaleTimeString('ru-RU')}
+    </div>
+</div>`;
+}
+
 
 function generateComponentHTML(name, component) {
     const isOk = !component || component.status === 'ok' || !component.status;
@@ -1248,126 +1971,74 @@ function generateComponentHTML(name, component) {
 async function exportToPDF() {
     if (!appState.currentReport) return;
     
-    showToast('Генерация PDF...', 'info');
+    if (!isElectron) {
+        showToast('PDF экспорт доступен только в десктоп версии', 'warning');
+        return;
+    }
     
-    // Создаём iframe для печати
-    const printFrame = document.createElement('iframe');
-    printFrame.style.position = 'absolute';
-    printFrame.style.top = '-10000px';
-    printFrame.style.left = '-10000px';
-    document.body.appendChild(printFrame);
-    
-    const printDoc = printFrame.contentWindow.document;
-    printDoc.open();
-    printDoc.write(`
-<!DOCTYPE html>
-<html>
-<head>
-    <meta charset="UTF-8">
-    <title>Отчёт - ${appState.currentReport.vin}</title>
-    <style>
-        @media print {
-            body { 
-                margin: 0; 
-                padding: 20px;
-                -webkit-print-color-adjust: exact !important;
-                print-color-adjust: exact !important;
-            }
-            @page { 
-                margin: 15mm; 
-                size: A4;
-            }
+    try {
+        showToast('PDF экспортируется...', 'info');
+        
+        const filename = `${sanitizeForFilename(appState.currentReport.vin)}_${formatDateForFile(appState.currentReport.createdAt)}.pdf`;
+
+        
+        const result = await ipcRenderer.invoke('export-to-pdf', {
+            htmlContent: appState.currentReport.htmlContent,
+            filename: filename
+        });
+        
+        if (result.success) {
+            showToast('PDF успешно сохранён!', 'success');
+        } else if (result.canceled) {
+            showToast('Экспорт отменён', 'info');
+        } else {
+            throw new Error(result.error || 'Неизвестная ошибка');
         }
-        body {
-            font-family: 'Segoe UI', Arial, sans-serif;
-            background: white;
-        }
-    </style>
-</head>
-<body>
-    ${appState.currentReport.htmlContent}
-</body>
-</html>
-    `);
-    printDoc.close();
-    
-    // Ждём загрузки изображений
-    await new Promise(resolve => setTimeout(resolve, 500));
-    
-    printFrame.contentWindow.print();
-    
-    // Удаляем iframe после печати
-    setTimeout(() => {
-        document.body.removeChild(printFrame);
-    }, 1000);
+    } catch (error) {
+        console.error('PDF export error:', error);
+        showToast(`Ошибка при экспорте: ${error.message}`, 'error');
+    }
 }
+
 
 // ============================================
 // Экспорт в Google Docs
 // ============================================
 
 async function createGoogleDoc() {
-    const apiKey = appState.settings.googleApiKey;
-    
-    if (!apiKey) {
-        showToast('Укажите Google API Key в настройках', 'warning');
-        // Fallback - копируем в буфер
-        copyReportAsText();
-        return;
-    }
+    if (!appState.currentReport) return;
     
     showToast('Создание Google Doc...', 'info');
+    console.log('[App] Creating Google Doc...');
     
     try {
-        // Конвертируем HTML в текст для Google Docs
-        const textContent = htmlToGoogleDocsText(appState.currentReport.htmlContent);
+        let result;
         
-        // Создаём документ через Google Docs API
-        const response = await fetch(`https://docs.googleapis.com/v1/documents?key=${apiKey}`, {
-            method: 'POST',
-            headers: {
-                'Content-Type': 'application/json'
-            },
-            body: JSON.stringify({
-                title: `Отчёт авто - ${appState.currentReport.vin} - ${formatDateForFile(appState.currentReport.createdAt)}`
-            })
-        });
-        
-        if (!response.ok) {
-            throw new Error('Не удалось создать документ');
+        if (isElectron) {
+            console.log('[App] Using Electron IPC');
+            result = await ipcRenderer.invoke('create-google-doc', {
+                title: `Отчёт авто - ${appState.currentReport.vin} - ${formatDateForFile(appState.currentReport.createdAt)}`,
+                content: appState.currentReport.htmlContent
+            });
+            console.log('[App] IPC Result:', result);
+        } else {
+            console.log('[App] Using web version');
+            showToast('Откройте Google Docs и вставьте текст (Ctrl+V)', 'info');
+            copyReportAsText();
+            return;
         }
         
-        const doc = await response.json();
-        const docId = doc.documentId;
-        
-        // Добавляем контент в документ
-        await fetch(`https://docs.googleapis.com/v1/documents/${docId}:batchUpdate?key=${apiKey}`, {
-            method: 'POST',
-            headers: {
-                'Content-Type': 'application/json'
-            },
-            body: JSON.stringify({
-                requests: [{
-                    insertText: {
-                        location: { index: 1 },
-                        text: textContent
-                    }
-                }]
-            })
-        });
-        
-        const docUrl = `https://docs.google.com/document/d/${docId}/edit`;
-        
-        // Сохраняем ссылку
-        appState.currentReport.googleDocUrl = docUrl;
-        await saveData();
-        
-        showToast('Google Doc создан!', 'success');
-        openLink(docUrl);
-        
+        if (result.success && result.docUrl) {
+            appState.currentReport.googleDocUrl = result.docUrl;
+            await saveData();
+            showToast('Google Doc создан!', 'success');
+            openLink(result.docUrl);
+        } else {
+            throw new Error(result.error || 'Ошибка создания документа');
+        }
     } catch (error) {
-        console.error('Google Docs error:', error);
-        showToast('Ошибка создания Google Doc. Копируем текст...', 'warning');
+        console.error('[App] Error:', error);
+        showToast('Ошибка: ' + error.message, 'error');
         copyReportAsText();
     }
 }
@@ -1452,13 +2123,43 @@ async function deleteReport(reportId) {
 }
 
 function copyReportLink() {
-    if (appState.currentReport?.googleDocUrl) {
-        navigator.clipboard.writeText(appState.currentReport.googleDocUrl);
-        showToast('Ссылка на Google Doc скопирована', 'success');
+    if (appState.currentReport?.driveUrl) {
+        // Для Electron используем альтернативный метод
+        if (isElectron && navigator.clipboard) {
+            navigator.clipboard.writeText(appState.currentReport.driveUrl).then(() => {
+                showToast('Ссылка на Drive скопирована!', 'success');
+            }).catch(err => {
+                // Фоллбэк через textarea
+                copyToClipboardFallback(appState.currentReport.driveUrl);
+            });
+        } else {
+            copyToClipboardFallback(appState.currentReport.driveUrl);
+        }
     } else {
-        showToast('Google Doc ещё не создан', 'warning');
+        showToast('Файл ещё не загружен в Drive', 'warning');
     }
 }
+
+// Фоллбэк для копирования (работает всегда)
+function copyToClipboardFallback(text) {
+    const textarea = document.createElement('textarea');
+    textarea.value = text;
+    textarea.style.position = 'fixed';
+    textarea.style.opacity = '0';
+    document.body.appendChild(textarea);
+    textarea.focus();
+    textarea.select();
+    
+    try {
+        document.execCommand('copy');
+        showToast('Ссылка на Drive скопирована!', 'success');
+    } catch (err) {
+        showToast('Не удалось скопировать ссылку', 'error');
+    }
+    
+    document.body.removeChild(textarea);
+}
+
 
 async function exportReport() {
     if (!appState.currentReport) return;

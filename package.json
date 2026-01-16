@@ -29,15 +29,11 @@
       "target": [
         {
           "target": "nsis",
-          "arch": [
-            "x64"
-          ]
+          "arch": ["x64"]
         },
         {
           "target": "portable",
-          "arch": [
-            "x64"
-          ]
+          "arch": ["x64"]
         }
       ],
       "icon": "public/icon.ico"
@@ -45,23 +41,25 @@
     "nsis": {
       "oneClick": false,
       "allowToChangeInstallationDirectory": true,
-      "installerLanguages": [
-        "ru"
-      ],
-      "language": "1049"
+      "installerLanguages": ["ru"],
+      "language": "1049",
+      "installerIcon": "public/icon.ico",
+      "uninstallerIcon": "public/icon.ico"
     },
     "portable": {
       "artifactName": "CarReportGenerator-Portable.exe"
     }
   },
   "dependencies": {
-    "openai": "^4.67.0"
+    "@getstation/electron-google-oauth2": "^14.0.0",
+    "googleapis": "^126.0.0",
+    "node-fetch": "^2.7.0"
   },
   "devDependencies": {
     "concurrently": "^9.0.0",
     "electron": "^32.0.0",
     "electron-builder": "^25.0.0",
-    "vite": "^5.4.21",
+    "vite": "^5.4.1",
     "wait-on": "^8.0.0"
   }
 }
