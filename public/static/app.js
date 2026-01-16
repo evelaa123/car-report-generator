@@ -623,8 +623,11 @@ async function toggleEditMode() {
         
         showToast('Изменения сохранены!', 'success');
         
-        // Обновляем PDF в Drive если он существует
-        if (isElectron && appState.currentReport.driveFileId) {
+        // Обновляем PDF в Drive если он существует (для обеих версий)
+        if (appState.currentReport.driveFileId) {
+            console.log('[Save] Auto-updating Drive file...');
+            
+            if (isElectron) {
             showToast('Обновление PDF в Drive...', 'info');
             
             try {
@@ -638,6 +641,17 @@ async function toggleEditMode() {
                 
                 if (result.success) {
                     showToast('PDF обновлён в Drive!', 'success');
+                } else {
+                    console.error('[Save] Drive update failed:', result.error);
+                }
+            } catch (error) {
+                console.error('[Save] Drive update error:', error);
+            }
+        } else if (!isElectron && appState.currentReport.driveFileId) {
+            // Веб версия - обновляем в фоне
+            uploadOrUpdateDriveFile().catch(error => {
+                console.error('[Save] Background Drive update failed:', error);
+            });
                 } else {
                     // Если обновление не удалось - перезагружаем заново
                     showToast('Загрузка нового PDF...', 'info');
@@ -1541,12 +1555,19 @@ async function uploadOrUpdateDriveFile() {
             
             // Добавляем timestamp к ссылке для обхода кеша
             const urlWithCache = file.webViewLink.includes('?')
-                ? `${file.webViewLink}&t=${Date.now()}`
-                : `${file.webViewLink}?t=${Date.now()}`;
-            await navigator.clipboard.writeText(file.webViewLink);
+                ? `${file.webViewLink}&t=${Date.now()}&v=${Math.random().toString(36).substring(7)}`
+                : `${file.webViewLink}?t=${Date.now()}&v=${Math.random().toString(36).substring(7)}`;
+            
+            // Копируем ссылку (может не сработать если окно не в фокусе)
+            try {
+                await navigator.clipboard.writeText(file.webViewLink);
+                console.log('[Drive Upload] Link copied to clipboard');
+            } catch (clipboardError) {
+                console.warn('[Drive Upload] Clipboard write failed:', clipboardError.message);
+            }
             
             const isUpdate = !!appState.currentReport.driveFileId;
-            const message = isUpdate ? 'PDF обновлён в Drive! Ссылка скопирована' : 'PDF загружен в Drive! Ссылка скопирована';
+            const message = isUpdate ? 'PDF обновлён в Drive!' : 'PDF загружен в Drive!';
             console.log('[Drive Upload] Complete:', message);
             showToast(message, 'success');
             window.open(urlWithCache, '_blank');
