@@ -2086,6 +2086,8 @@ async function exportToPDF() {
             
             if (result.success && result.pdfBase64) {
                 console.log('PDF base64 length:', result.pdfBase64.length);
+                console.log('PDF base64 first 100 chars:', result.pdfBase64.substring(0, 100));
+                console.log('PDF base64 type:', typeof result.pdfBase64);
                 
                 // Скачиваем PDF
                 const blob = base64ToBlob(result.pdfBase64, 'application/pdf');
