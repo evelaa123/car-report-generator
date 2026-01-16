@@ -1488,18 +1488,22 @@ async function uploadOrUpdateDriveFile() {
                 const form = new FormData();
                 const metadata = {
                     name: filename,
-                    mimeType: 'application/pdf'
+                    mimeType: 'application/pdf',
+                    modifiedTime: new Date().toISOString()
                 };
                 form.append('metadata', new Blob([JSON.stringify(metadata)], { type: 'application/json' }));
                 form.append('file', pdfBlob);
                 
-                uploadResponse = await fetch(`https://www.googleapis.com/upload/drive/v3/files/${appState.currentReport.driveFileId}?uploadType=multipart&fields=id,webViewLink`, {
+                uploadResponse = await fetch(`https://www.googleapis.com/upload/drive/v3/files/${appState.currentReport.driveFileId}?uploadType=multipart&fields=id,webViewLink,modifiedTime,version`, {
                     method: 'PATCH',
                     headers: {
-                        'Authorization': `Bearer ${accessToken}`
+                        'Authorization': `Bearer ${accessToken}`,
+                        'X-Goog-Upload-Protocol': 'multipart'
                     },
                     body: form
                 });
+                
+                console.log('[Drive Upload] PATCH request sent, awaiting response...');
             } else {
                 // Создаём новый файл
                 console.log('[Drive Upload] Creating new file');
@@ -1546,18 +1550,33 @@ async function uploadOrUpdateDriveFile() {
             });
             
             console.log('[Drive Upload] Permissions set, saving state...');
-            appState.currentReport.driveUrl = file.webViewLink;
-            appState.currentReport.driveFileId = file.id;
+            
+            // Получаем обновленную информацию о файле включая modifiedTime
+            const fileInfoResponse = await fetch(`https://www.googleapis.com/drive/v3/files/${file.id}?fields=id,webViewLink,modifiedTime,version`, {
+                headers: {
+                    'Authorization': `Bearer ${accessToken}`
+                }
+            });
+            
+            const fileInfo = await fileInfoResponse.json();
+            console.log('[Drive Upload] File info:', fileInfo);
+            
+            appState.currentReport.driveUrl = fileInfo.webViewLink;
+            appState.currentReport.driveFileId = fileInfo.id;
+            appState.currentReport.driveModifiedTime = fileInfo.modifiedTime;
             await saveData();
             
             // Добавляем timestamp к ссылке для обхода кеша
-            const urlWithCache = file.webViewLink.includes('?')
-                ? `${file.webViewLink}&t=${Date.now()}&v=${Math.random().toString(36).substring(7)}`
-                : `${file.webViewLink}?t=${Date.now()}&v=${Math.random().toString(36).substring(7)}`;
+            const modTime = fileInfo.modifiedTime ? new Date(fileInfo.modifiedTime).getTime() : Date.now();
+            const urlWithCache = fileInfo.webViewLink.includes('?')
+                ? `${fileInfo.webViewLink}&t=${modTime}&v=${Math.random().toString(36).substring(7)}`
+                : `${fileInfo.webViewLink}?t=${modTime}&v=${Math.random().toString(36).substring(7)}`;
+            
+            console.log('[Drive Upload] Opening URL with cache busting:', urlWithCache);
             
             // Копируем ссылку (может не сработать если окно не в фокусе)
             try {
-                await navigator.clipboard.writeText(file.webViewLink);
+                await navigator.clipboard.writeText(fileInfo.webViewLink);
                 console.log('[Drive Upload] Link copied to clipboard');
             } catch (clipboardError) {
                 console.warn('[Drive Upload] Clipboard write failed:', clipboardError.message);
@@ -1567,6 +1586,10 @@ async function uploadOrUpdateDriveFile() {
             const message = isUpdate ? 'PDF обновлён в Drive!' : 'PDF загружен в Drive!';
             console.log('[Drive Upload] Complete:', message);
             showToast(message, 'success');
+            
+            // Небольшая задержка чтобы Google Drive успел обработать изменения
+            await new Promise(resolve => setTimeout(resolve, 1000));
+            
             window.open(urlWithCache, '_blank');
             
         } catch (error) {
