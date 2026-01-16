@@ -95,7 +95,7 @@ export default async function handler(req, res) {
         await page.setContent(fullHtml, { waitUntil: 'networkidle0' });
         
         console.log('Waiting for images...');
-        await page.waitForTimeout(1500);
+        await new Promise(resolve => setTimeout(resolve, 1500));
 
         console.log('Generating PDF...');
         const pdfBuffer = await page.pdf({
