@@ -1445,32 +1445,28 @@ async function uploadOrUpdateDriveFile() {
             
             console.log('[Drive Upload] Access token obtained');
             
-            let pdfBase64 = appState.currentReport.pdfBase64;
+            // ВСЕГДА генерируем новый PDF с актуальным htmlContent
+            console.log('[Drive Upload] Generating fresh PDF from current HTML...');
+            showToast('Генерация PDF...', 'info');
             
-            // Если PDF ещё не сгенерирован - генерируем
-            if (!pdfBase64) {
-                console.log('[Drive Upload] PDF not generated yet, generating...');
-                showToast('Генерация PDF...', 'info');
-                
-                const response = await fetch('/api/generate-pdf', {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({
-                        htmlContent: appState.currentReport.htmlContent
-                    })
-                });
+            const response = await fetch('/api/generate-pdf', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    htmlContent: appState.currentReport.htmlContent
+                })
+            });
 
-                const result = await response.json();
-                console.log('[Drive Upload] PDF generation response:', result.success ? 'Success' : 'Failed');
-                
-                if (!result.success) {
-                    throw new Error(result.error);
-                }
-                
-                pdfBase64 = result.pdfBase64;
-                appState.currentReport.pdfBase64 = pdfBase64;
-                await saveData();
+            const result = await response.json();
+            console.log('[Drive Upload] PDF generation response:', result.success ? 'Success' : 'Failed');
+            
+            if (!result.success) {
+                throw new Error(result.error);
             }
+            
+            const pdfBase64 = result.pdfBase64;
+            appState.currentReport.pdfBase64 = pdfBase64; // Обновляем сохраненную версию
+            await saveData();
             
             console.log('[Drive Upload] PDF ready, base64 length:', pdfBase64.length);
             showToast('Загрузка в Google Drive...', 'info');
