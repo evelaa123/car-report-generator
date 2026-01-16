@@ -2486,17 +2486,38 @@ document.addEventListener('keydown', (e) => {
 
 // Google OAuth для веба
 async function getGoogleAccessToken() {
+    // Проверяем сохраненный токен
+    const savedToken = localStorage.getItem('google_access_token');
+    const tokenExpiry = localStorage.getItem('google_token_expiry');
+    
+    if (savedToken && tokenExpiry) {
+        const expiryTime = parseInt(tokenExpiry);
+        const now = Date.now();
+        
+        // Если токен еще действителен (с запасом 5 минут)
+        if (now < expiryTime - 5 * 60 * 1000) {
+            console.log('[Google Auth] Using cached token, expires in', Math.round((expiryTime - now) / 1000 / 60), 'minutes');
+            return savedToken;
+        } else {
+            console.log('[Google Auth] Cached token expired, getting new one');
+            localStorage.removeItem('google_access_token');
+            localStorage.removeItem('google_token_expiry');
+        }
+    }
+    
     return new Promise((resolve, reject) => {
         const CLIENT_ID = '3349739192-b1anlk17l8c1ba1h1l6qnq7832aqimvf.apps.googleusercontent.com';
         const REDIRECT_URI = window.location.origin;
         const SCOPE = 'https://www.googleapis.com/auth/drive.file';
+        
+        console.log('[Google Auth] Opening authorization window...');
         
         const authUrl = `https://accounts.google.com/o/oauth2/v2/auth?` +
             `client_id=${CLIENT_ID}&` +
             `redirect_uri=${encodeURIComponent(REDIRECT_URI)}&` +
             `response_type=token&` +
             `scope=${encodeURIComponent(SCOPE)}&` +
-            `prompt=consent`;
+            `prompt=select_account`;
         
         const authWindow = window.open(authUrl, 'Google Auth', 'width=500,height=600');
         
@@ -2518,6 +2539,14 @@ async function getGoogleAccessToken() {
                 if (url.includes('access_token')) {
                     const params = new URLSearchParams(url.split('#')[1]);
                     const accessToken = params.get('access_token');
+                    const expiresIn = params.get('expires_in'); // в секундах
+                    
+                    // Сохраняем токен и время истечения
+                    localStorage.setItem('google_access_token', accessToken);
+                    const expiryTime = Date.now() + (parseInt(expiresIn || '3600') * 1000);
+                    localStorage.setItem('google_token_expiry', expiryTime.toString());
+                    
+                    console.log('[Google Auth] Token obtained and cached, expires in', expiresIn, 'seconds');
                     
                     authWindow.close();
                     clearInterval(checkWindow);
