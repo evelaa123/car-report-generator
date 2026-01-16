@@ -1390,9 +1390,18 @@ async function openDriveLink() {
     console.log('[openDriveLink] Current driveUrl:', appState.currentReport.driveUrl);
     console.log('[openDriveLink] Current driveFileId:', appState.currentReport.driveFileId);
     
-    // Если уже есть ссылка - открываем с timestamp для обновления кеша
+    // Если файл уже на Drive и мы в вебе - обновляем его перед открытием
+    if (appState.currentReport.driveFileId && !isElectron) {
+        console.log('[openDriveLink] Updating existing Drive file before opening...');
+        await uploadOrUpdateDriveFile();
+        return;
+    }
+    
+    // Если уже есть ссылка (Electron версия) - просто открываем
     if (appState.currentReport.driveUrl) {
-        const urlWithCache = `${appState.currentReport.driveUrl}?t=${Date.now()}`;
+        const urlWithCache = appState.currentReport.driveUrl.includes('?') 
+            ? `${appState.currentReport.driveUrl}&t=${Date.now()}`
+            : `${appState.currentReport.driveUrl}?t=${Date.now()}`;
         console.log('[openDriveLink] Opening existing link with cache buster:', urlWithCache);
         if (isElectron) {
             ipcRenderer.invoke('open-external', urlWithCache);
@@ -1403,6 +1412,10 @@ async function openDriveLink() {
     }
     
     console.log('[openDriveLink] No existing link, uploading to Drive...');
+    await uploadOrUpdateDriveFile();
+}
+
+async function uploadOrUpdateDriveFile() {
     
     // Если ссылки нет - загружаем в Drive
     if (!isElectron) {
@@ -1527,10 +1540,12 @@ async function openDriveLink() {
             await saveData();
             
             // Добавляем timestamp к ссылке для обхода кеша
-            const urlWithCache = `${file.webViewLink}?t=${Date.now()}`;
+            const urlWithCache = file.webViewLink.includes('?')
+                ? `${file.webViewLink}&t=${Date.now()}`
+                : `${file.webViewLink}?t=${Date.now()}`;
             await navigator.clipboard.writeText(file.webViewLink);
             
-            const isUpdate = appState.currentReport.driveFileId;
+            const isUpdate = !!appState.currentReport.driveFileId;
             const message = isUpdate ? 'PDF обновлён в Drive! Ссылка скопирована' : 'PDF загружен в Drive! Ссылка скопирована';
             console.log('[Drive Upload] Complete:', message);
             showToast(message, 'success');
