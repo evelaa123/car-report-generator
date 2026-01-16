@@ -131,7 +131,7 @@ export default async function handler(req, res) {
         
         const pdfBuffer = await page.pdf({
             width: '210mm',
-            height: `${contentHeight + 40}px`, // +40px запас
+            height: `${contentHeight + 10}px`, // Минимальный запас
             printBackground: true,
             pageRanges: '1',
             margin: {
