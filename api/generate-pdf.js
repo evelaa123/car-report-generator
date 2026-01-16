@@ -113,10 +113,16 @@ export default async function handler(req, res) {
         browser = null;
 
         console.log('PDF generated successfully');
+        console.log('PDF buffer type:', typeof pdfBuffer);
+        console.log('PDF buffer length:', pdfBuffer.length);
+        
+        // Конвертируем Uint8Array в base64
+        const base64 = Buffer.from(pdfBuffer).toString('base64');
+        console.log('Base64 length:', base64.length);
 
         res.status(200).json({
             success: true,
-            pdfBase64: pdfBuffer.toString('base64')
+            pdfBase64: base64
         });
 
     } catch (error) {
