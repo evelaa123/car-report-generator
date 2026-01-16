@@ -31,6 +31,15 @@ export default async function handler(req, res) {
         });
 
         const page = await browser.newPage();
+        await page.setViewport({ width: 794, height: 1123 }); // A4 в пикселях
+
+        // Заменяем Unicode символы на текст/HTML
+        let processedHtml = htmlContent
+            .replace(/✓/g, '<span style="color: #10b981; font-weight: bold;">[✓]</span>')
+            .replace(/✗/g, '<span style="color: #ef4444; font-weight: bold;">[✗]</span>')
+            .replace(/★/g, '<span style="color: #f59e0b; font-weight: bold;">[★]</span>')
+            .replace(/⚠️/g, '<span style="color: #f59e0b; font-weight: bold;">[!]</span>')
+            .replace(/⚠/g, '<span style="color: #f59e0b; font-weight: bold;">[!]</span>');
 
         const fullHtml = `
 <!DOCTYPE html>
@@ -39,19 +48,25 @@ export default async function handler(req, res) {
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <style>
+        @page {
+            size: auto;
+            margin: 0;
+        }
+        
         * {
             margin: 0;
             padding: 0;
             box-sizing: border-box;
+            page-break-inside: avoid;
         }
         
         body {
-            font-family: 'DejaVu Sans', 'Arial Unicode MS', 'Segoe UI Symbol', 'Symbola', 'Noto Sans', Arial, sans-serif;
+            font-family: Arial, sans-serif;
             color: #333;
             line-height: 1.6;
             padding: 20px;
             background: white;
-            width: 210mm;
+            width: 100%;
         }
         
         .report-container {
@@ -64,14 +79,20 @@ export default async function handler(req, res) {
             font-size: 12px;
         }
         
-        h1 { font-size: 24px; margin: 10px 0; font-weight: 700; }
-        h2 { font-size: 18px; margin: 8px 0; font-weight: 600; }
-        h3 { font-size: 14px; margin: 6px 0; font-weight: 600; }
+        h1 { font-size: 24px; margin: 10px 0; font-weight: 700; page-break-after: avoid; }
+        h2 { font-size: 18px; margin: 8px 0; font-weight: 600; page-break-after: avoid; }
+        h3 { font-size: 14px; margin: 6px 0; font-weight: 600; page-break-after: avoid; }
         
         table {
             width: 100%;
             border-collapse: collapse;
             margin: 10px 0;
+            page-break-inside: auto;
+        }
+        
+        tr {
+            page-break-inside: avoid;
+            page-break-after: auto;
         }
         
         td, th {
@@ -82,12 +103,13 @@ export default async function handler(req, res) {
         img {
             max-width: 100%;
             height: auto;
+            page-break-inside: avoid;
         }
     </style>
 </head>
 <body>
     <div class="report-container">
-        ${htmlContent}
+        ${processedHtml}
     </div>
 </body>
 </html>`;
@@ -96,27 +118,22 @@ export default async function handler(req, res) {
         await page.setContent(fullHtml, { waitUntil: 'networkidle0' });
         
         console.log('Waiting for rendering...');
-        await new Promise(resolve => setTimeout(resolve, 2000));
-        
-        // Проверяем что Unicode символы отображаются
-        await page.evaluate(() => {
-            const testDiv = document.createElement('div');
-            testDiv.textContent = '✓ ✗ ★ ⚠';
-            testDiv.style.fontFamily = 'DejaVu Sans, Arial Unicode MS, Segoe UI Symbol';
-            document.body.appendChild(testDiv);
-        });
+        await new Promise(resolve => setTimeout(resolve, 1500));
 
         console.log('Generating PDF...');
         
         // Получаем высоту контента
         const contentHeight = await page.evaluate(() => {
-            return document.documentElement.scrollHeight;
+            return Math.ceil(document.body.scrollHeight);
         });
+        
+        console.log('Content height:', contentHeight);
         
         const pdfBuffer = await page.pdf({
             width: '210mm',
-            height: `${contentHeight}px`,
+            height: `${contentHeight + 40}px`, // +40px запас
             printBackground: true,
+            pageRanges: '1',
             margin: {
                 top: '0mm',
                 bottom: '0mm',
