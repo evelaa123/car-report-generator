@@ -17,23 +17,21 @@ export default async function handler(req, res) {
 
         console.log('Launching browser...');
         
-        // Используем удаленный Chromium для Vercel
         const executablePath = await chromium.executablePath(
             'https://github.com/Sparticuz/chromium/releases/download/v131.0.0/chromium-v131.0.0-pack.tar'
         );
         
         browser = await puppeteer.launch({
-            args: chromium.args,
+            args: [...chromium.args, '--hide-scrollbars', '--disable-web-security'],
             executablePath: executablePath,
-            defaultViewport: null,
+            defaultViewport: { width: 794, height: 1123 }, // Стартовый viewport
             headless: true,
             ignoreHTTPSErrors: true,
         });
 
         const page = await browser.newPage();
-        await page.setViewport({ width: 794, height: 1123 }); // A4 в пикселях
-
-        // Заменяем Unicode символы на простой текст
+        
+        // 1. Предварительная обработка HTML
         let processedHtml = htmlContent
             .replace(/✓/g, '<span style="color: #10b981; font-weight: bold; font-size: 14px;">OK</span>')
             .replace(/✗/g, '<span style="color: #ef4444; font-weight: bold; font-size: 14px;">NO</span>')
@@ -41,6 +39,7 @@ export default async function handler(req, res) {
             .replace(/⚠️/g, '<span style="color: #f59e0b; font-weight: bold; font-size: 14px;">!</span>')
             .replace(/⚠/g, '<span style="color: #f59e0b; font-weight: bold; font-size: 14px;">!</span>');
 
+        // 2. Исправленные стили
         const fullHtml = `
 <!DOCTYPE html>
 <html lang="ru">
@@ -57,7 +56,7 @@ export default async function handler(req, res) {
             margin: 0;
             padding: 0;
             box-sizing: border-box;
-            page-break-inside: avoid;
+            /* УБРАНО page-break-inside: avoid из глобального селектора - ЭТО ВЫЗЫВАЛО ПРОБЛЕМУ */
         }
         
         body {
@@ -67,6 +66,7 @@ export default async function handler(req, res) {
             padding: 20px;
             background: white;
             width: 100%;
+            height: auto;
         }
         
         .report-container {
@@ -79,6 +79,11 @@ export default async function handler(req, res) {
             font-size: 12px;
         }
         
+        /* Запрещаем разрыв только внутри важных элементов */
+        h1, h2, h3, img, tr { 
+            page-break-inside: avoid; 
+        }
+
         h1 { font-size: 24px; margin: 10px 0; font-weight: 700; page-break-after: avoid; }
         h2 { font-size: 18px; margin: 8px 0; font-weight: 600; page-break-after: avoid; }
         h3 { font-size: 14px; margin: 6px 0; font-weight: 600; page-break-after: avoid; }
@@ -87,12 +92,6 @@ export default async function handler(req, res) {
             width: 100%;
             border-collapse: collapse;
             margin: 10px 0;
-            page-break-inside: auto;
-        }
-        
-        tr {
-            page-break-inside: avoid;
-            page-break-after: auto;
         }
         
         td, th {
@@ -103,7 +102,7 @@ export default async function handler(req, res) {
         img {
             max-width: 100%;
             height: auto;
-            page-break-inside: avoid;
+            display: block;
         }
     </style>
 </head>
@@ -115,25 +114,31 @@ export default async function handler(req, res) {
 </html>`;
 
         console.log('Setting content...');
+        // networkidle0 важен, чтобы подгрузились картинки (логотип)
         await page.setContent(fullHtml, { waitUntil: 'networkidle0' });
         
-        console.log('Waiting for rendering...');
-        await new Promise(resolve => setTimeout(resolve, 1500));
+        // 3. Вычисление высоты и изменение Viewport
+        // Это заставляет браузер отрендерить всю страницу целиком перед печатью
+        const bodyHeight = await page.evaluate(() => {
+            return document.body.scrollHeight;
+        });
+        
+        const contentHeight = Math.ceil(bodyHeight);
+        console.log('Content height calculated:', contentHeight);
+
+        // Расширяем окно браузера на полную высоту контента
+        await page.setViewport({ 
+            width: 794, 
+            height: contentHeight + 50 
+        });
 
         console.log('Generating PDF...');
         
-        // Получаем высоту контента
-        const contentHeight = await page.evaluate(() => {
-            return Math.ceil(document.body.scrollHeight);
-        });
-        
-        console.log('Content height:', contentHeight);
-        
         const pdfBuffer = await page.pdf({
             width: '210mm',
-            height: `${contentHeight + 10}px`, // Минимальный запас
+            height: `${contentHeight + 20}px`, // Добавляем небольшой запас
             printBackground: true,
-            pageRanges: '1',
+            // Убрали pageRanges: '1', так как мы и так задаем полную высоту страницы
             margin: {
                 top: '0mm',
                 bottom: '0mm',
@@ -145,13 +150,9 @@ export default async function handler(req, res) {
         await browser.close();
         browser = null;
 
-        console.log('PDF generated successfully');
-        console.log('PDF buffer type:', typeof pdfBuffer);
-        console.log('PDF buffer length:', pdfBuffer.length);
+        console.log('PDF generated successfully, size:', pdfBuffer.length);
         
-        // Конвертируем Uint8Array в base64
         const base64 = Buffer.from(pdfBuffer).toString('base64');
-        console.log('Base64 length:', base64.length);
 
         res.status(200).json({
             success: true,
@@ -164,9 +165,7 @@ export default async function handler(req, res) {
         if (browser) {
             try {
                 await browser.close();
-            } catch (e) {
-                console.error('Error closing browser:', e);
-            }
+            } catch (e) { console.error(e); }
         }
         
         res.status(500).json({ 
@@ -180,6 +179,8 @@ export const config = {
     api: {
         bodyParser: {
             sizeLimit: '10mb'
-        }
+        },
+        // Увеличиваем таймаут функции (Vercel hobby plan ограничение 10-60 сек)
+        maxDuration: 60 
     }
 };
