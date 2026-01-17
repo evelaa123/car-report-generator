@@ -1177,7 +1177,7 @@ function getSystemPrompt() {
   "fuelType": "Тип топлива",
   "queryDate": "YYYY-MM-DD",
   
-  "rating": 4.9,
+  "rating": 4.9 (это пример),
   "componentClass": "A/B/C (класс важных узлов)",
   "mileageAnomalies": "Не обнаружено / Обнаружено",
   
@@ -1555,7 +1555,7 @@ async function uploadOrUpdateDriveFile() {
             const metadata = {
                 name: filename,
                 mimeType: 'application/pdf',
-                parents: ['18EZxRYhO94_U545EICtvtHCf7CeVzP0D']
+                parents: ['1mf710QcMqsgu7ybB6TBH6gpM76KB-a_P']
             };
             
             const form = new FormData();
@@ -1814,7 +1814,7 @@ function generateHTMLReport(data, tariff = 'full') {
     const logoSrc = appState.settings.logoBase64 || appState.settings.logoUrl || '';
     
     return `
-<div class="report-container" style="font-family: 'Segoe UI', Arial, sans-serif; max-width: 900px; margin: 0 auto; color: #333; line-height: 1.6; background: white; padding: 30px;">
+<div class="report-container" style="font-family: 'Segoe UI', Arial, sans-serif; max-width: 900px; margin: 0 auto; color: #333; line-height: 1.6; background: white; padding: 20px 30px;">
     
     <!-- Шапка с логотипом -->
     <div style="display: flex; justify-content: space-between; align-items: flex-start; margin-bottom: 30px; padding-bottom: 20px; border-bottom: 3px solid #4a4a8a;">
@@ -1829,8 +1829,8 @@ function generateHTMLReport(data, tariff = 'full') {
     <div style="margin-bottom: 25px; background: #f8f9fa; border-radius: 12px; padding: 20px;">
         <div style="display: grid; grid-template-columns: repeat(2, 1fr); gap: 15px;">
             <div>
-                <span style="font-size: 11px; color: #888; text-transform: uppercase; letter-spacing: 0.5px;">Марка / модель</span>
-                <p style="font-size: 15px; font-weight: 600; color: #333; margin: 5px 0 0 0;">${data.brand || '—'} ${data.model || ''}</p>
+                <span style="font-size: 11px; color: #888; text-transform: uppercase; letter-spacing: 0.5px;">Марка</span>
+                <p style="font-size: 15px; font-weight: 600; color: #333; margin: 5px 0 0 0;">${data.brand || '—'}</p>
             </div>
             <div>
                 <span style="font-size: 11px; color: #888; text-transform: uppercase;">Тип</span>
@@ -2137,7 +2137,6 @@ ${data.serviceHistory && data.serviceHistory.records && data.serviceHistory.reco
         <div style="background: #f8f9fa; border-radius: 12px; padding: 15px;">
             <h3 style="font-size: 14px; font-weight: bold; color: #2a2a5a; margin: 0 0 10px 0; padding-bottom: 8px; border-bottom: 2px solid #e0e0e0;">6. Характеристики ТС</h3>
             <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 8px; font-size: 11px;">
-                <div><span style="color: #888;">Год:</span> <p style="font-weight: 600; margin: 2px 0;">${data.vehicleInfo.year}</p></div>
                 <div><span style="color: #888;">Объём двигателя:</span> <p style="font-weight: 600; margin: 2px 0;">${data.vehicleInfo.engineVolume ? data.vehicleInfo.engineVolume + ' см³' : ''}</p></div>
                 <div><span style="color: #888;">Мощность:</span> <p style="font-weight: 600; margin: 2px 0;">${data.vehicleInfo.power ? data.vehicleInfo.power + ' kW' : ''}</p></div>
                 <div><span style="color: #888;">КПП:</span> <p style="font-weight: 600; margin: 2px 0;">${data.vehicleInfo.transmission}</p></div>
@@ -2215,7 +2214,7 @@ function generateInsuranceBlock(data) {
     if (!data.insuranceHistory || data.insuranceHistory.length === 0) return '';
     
     return `
-<div style="page-break-before: always; margin-top: 40px; padding-top: 30px; border-top: 3px solid #4a4a8a;">
+<div style="margin-top: 40px; padding-top: 30px; border-top: 3px solid #4a4a8a;">
     <h1 style="font-size: 24px; font-weight: bold; color: #2a2a5a; margin: 0 0 20px 0;">БЛОК 2: СТРАХОВЫЕ СЛУЧАИ</h1>
     
     <!-- Общая информация -->
