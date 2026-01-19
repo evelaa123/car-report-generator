@@ -568,7 +568,10 @@ function renderReportContent(report) {
     const container = document.getElementById('report-content');
     if (!container) return;
     
-    const typeLabel = report.type === 'full' ? 'Полный отчёт' : 'Короткий отчёт';
+    let typeLabel = 'Отчёт';
+    if (report.type === 'full') typeLabel = 'Полный отчёт';
+    else if (report.type === 'short') typeLabel = 'Короткий отчёт';
+    else if (report.type === 'insurance') typeLabel = 'Страховой отчёт';
     const isEditing = container.getAttribute('data-editing') === 'true';
     
     container.innerHTML = `
@@ -576,8 +579,8 @@ function renderReportContent(report) {
         <div class="flex items-center justify-between mb-6 p-4 bg-black/30 rounded-xl">
             <div class="flex items-center gap-3">
                 <span class="text-sm text-gray-400">${typeLabel}</span>
-                ${report.type ? `<span class="text-xs px-2 py-1 rounded ${report.type === 'full' ? 'bg-purple-600' : 'bg-blue-600'}">
-                    <i class="fas ${report.type === 'full' ? 'fa-file-alt' : 'fa-file-invoice'}"></i>
+                ${report.type ? `<span class="text-xs px-2 py-1 rounded ${report.type === 'full' ? 'bg-purple-600' : (report.type === 'insurance' ? 'bg-orange-600' : 'bg-blue-600')}">
+                    <i class="fas ${report.type === 'full' ? 'fa-file-alt' : (report.type === 'insurance' ? 'fa-file-invoice' : 'fa-file-alt')}"></i>
                 </span>` : ''}
             </div>
             
@@ -1071,10 +1074,22 @@ const tariff = document.querySelector('input[name="report-tariff"]:checked')?.va
 const reports = [];
 
 // Один отчёт в зависимости от тарифа
-const htmlContent = generateHTMLReport(reportData, tariff);
+let htmlContent;
+let reportType = 'full';
+if (tariff === 'insurance') {
+    htmlContent = generateInsuranceReport(reportData);
+    reportType = 'insurance';
+} else if (tariff === 'short') {
+    htmlContent = generateHTMLReport(reportData, 'short');
+    reportType = 'short';
+} else {
+    htmlContent = generateHTMLReport(reportData, 'full');
+    reportType = 'full';
+}
+
 reports.push({
     id: Date.now().toString(),
-    type: tariff === 'full' ? 'full' : 'short',
+    type: reportType,
     createdAt: new Date().toISOString(),
     vin: reportData.vin || 'Неизвестно',
     brand: reportData.brand || 'Неизвестно',
@@ -1168,7 +1183,7 @@ function getSystemPrompt() {
 - ИТОГ БЕЗ КИТАЙСКИХ СИМВОЛОВ
 - ВСЕ ЗНАЧЕНИЯ В ПРИМЕРЕ НИЖЕ - ЭТО ТОЛЬКО ПРИМЕРЫ ФОРМАТА! Заполни РЕАЛЬНЫМИ данными из изображений!
 - НЕ УПОМИНАЙ источник данных, просто предоставь информацию
-
+- НЕ УПОМИНАЙ МОДЕЛЬ ТОЛЬКО МАРУ И НЕ УПОМИНАЙ ЦВЕТ
 БЛОК ОТЗЫВНЫХ КАМПАНИЙ (召回记录):
 Если на изображениях есть информация об отзывных кампаниях производителя (召回记录), обязательно включи её в поле "recallRecords". Это информация о заводских дефектах и их устранении.
 
@@ -2251,7 +2266,7 @@ function generateInsuranceBlock(data) {
     
     return `
 <div style="margin-top: 40px; padding-top: 30px; border-top: 3px solid #4a4a8a;">
-    <h1 style="font-size: 24px; font-weight: bold; color: #2a2a5a; margin: 0 0 20px 0;">БЛОК 2: СТРАХОВЫЕ СЛУЧАИ</h1>
+    <h1 style="font-size: 24px; font-weight: bold; color: #2a2a5a; margin: 0 0 20px 0;">СТРАХОВЫЕ СЛУЧАИ</h1>
     
     <!-- Общая информация -->
     ${data.insuranceInfo ? `
@@ -2342,41 +2357,47 @@ function generateInsuranceBlock(data) {
 // Генерация краткого страхового отчёта
 function generateInsuranceReport(data) {
     const logoSrc = appState.settings.logoBase64 || appState.settings.logoUrl;
-    
-    return `<div class="report-container" style="font-family: 'Segoe UI', Arial, sans-serif; max-width: 900px; margin: 0 auto; color: #333; line-height: 1.6; background: white; padding: 30px;">
-    <div style="display: flex; justify-content: space-between; align-items: flex-start; margin-bottom: 30px; padding-bottom: 20px; border-bottom: 3px solid #4a4a8a;">
+
+    // Страховой отчёт — фокус на страховой информации (без упоминания модели или цвета)
+    return `
+<div class="report-container" style="font-family: 'Segoe UI', Arial, sans-serif; max-width: 900px; margin: 0 auto; color: #333; line-height: 1.6; background: white; padding: 30px;">
+    <div style="display: flex; justify-content: space-between; align-items: flex-start; margin-bottom: 20px;">
         <div>
             <h1 style="font-size: 26px; font-weight: bold; color: #2a2a5a; margin: 0;">Страховой отчёт</h1>
-            <p style="font-size: 16px; color: #666; margin-top: 5px;">${data.brand || ''} ${data.model || ''}</p>
+            <p style="font-size: 16px; color: #666; margin-top: 6px;">${data.brand || ''}</p>
         </div>
         ${logoSrc ? `<img src="${logoSrc}" alt="Logo" style="max-height: 70px; max-width: 180px; object-fit: contain;">` : ''}
     </div>
-    
-    <div style="margin-bottom: 25px; background: #f8f9fa; border-radius: 12px; padding: 20px;">
-        <div style="display: grid; grid-template-columns: repeat(2, 1fr); gap: 15px;">
-            <div><span style="font-size: 11px; color: #888;">Марка / Модель</span>
-                <p style="font-size: 15px; font-weight: 600; margin: 5px 0 0 0;">${data.brand || ''} ${data.model || ''}</p></div>
+
+    <div style="margin-bottom: 18px; background: #f8f9fa; border-radius: 12px; padding: 16px;">
+        <div style="display: grid; grid-template-columns: repeat(2, 1fr); gap: 12px; font-size: 13px;">
+            <div><span style="font-size: 11px; color: #888;">Марка</span>
+                <p style="font-size: 15px; font-weight: 600; margin: 5px 0 0 0;">${data.brand || '—'}</p></div>
             <div><span style="font-size: 11px; color: #888;">VIN</span>
-                <p style="font-size: 15px; font-weight: 600; margin: 5px 0 0 0;">${data.vin || ''}</p></div>
+                <p style="font-size: 15px; font-weight: 600; margin: 5px 0 0 0;">${data.vin || '—'}</p></div>
             <div><span style="font-size: 11px; color: #888;">Рейтинг</span>
-                <p style="margin: 5px 0 0 0;"><span style="background: linear-gradient(135deg, #ffd700, #ffb800); color: #333; padding: 4px 12px; border-radius: 12px; font-weight: bold;">★ ${data.rating || ''}</span></p></div>
+                <p style="margin: 5px 0 0 0;"><span style="background: linear-gradient(135deg, #ffd700, #ffb800); color: #333; padding: 4px 12px; border-radius: 12px; font-weight: bold;">★ ${data.rating || '—'}</span></p></div>
             <div><span style="font-size: 11px; color: #888;">Пробег</span>
-                <p style="font-size: 15px; font-weight: 600; margin: 5px 0 0 0;">${data.lastMileage || ''}</p></div>
+                <p style="font-size: 15px; font-weight: 600; margin: 5px 0 0 0;">${data.lastMileage || '—'}</p></div>
         </div>
     </div>
-    
+
+    ${/* Вставляем детализованный блок страховых случаев из полного отчёта */ ''}
+    ${generateInsuranceBlock(data)}
+
     ${data.conclusion ? `
-    <div style="margin-bottom: 25px; background: linear-gradient(135deg, #e8f5e9, #c8e6c9); border-radius: 12px; padding: 20px;">
-        <h2 style="font-size: 18px; font-weight: bold; color: #2a2a5a; margin: 0 0 10px 0;">Заключение</h2>
-        <p style="margin: 5px 0;"><strong>Аварии:</strong> ${data.conclusion.accidents || ''}</p>
-        <p style="margin: 5px 0;"><strong>Рекомендация:</strong> ${data.conclusion.recommendation || ''}</p>
+    <div style="margin-top: 16px; margin-bottom: 10px; background: linear-gradient(135deg, #e8f5e9, #c8e6c9); border-radius: 12px; padding: 14px;">
+        <h2 style="font-size: 16px; font-weight: bold; color: #2a2a5a; margin: 0 0 8px 0;">Заключение</h2>
+        <p style="margin: 5px 0;"><strong>Аварии:</strong> ${data.conclusion.accidents || '—'}</p>
+        <p style="margin: 5px 0;"><strong>Рекомендация:</strong> ${data.conclusion.recommendation || '—'}</p>
     </div>
     ` : ''}
-    
-    <div style="text-align: center; color: #999; font-size: 11px; margin-top: 30px; padding-top: 20px; border-top: 1px solid #e0e0e0;">
+
+    <div style="text-align: center; color: #999; font-size: 11px; margin-top: 18px; padding-top: 12px; border-top: 1px solid #e0e0e0;">
         Отчёт сгенерирован ${new Date().toLocaleDateString('ru-RU')} ${new Date().toLocaleTimeString('ru-RU')}
     </div>
-</div>`;
+</div>
+`;
 }
 // Генерация блока отзывных кампаний производителя
 function generateRecallBlock(data) {
