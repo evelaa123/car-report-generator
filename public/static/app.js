@@ -2182,8 +2182,8 @@ ${data.serviceHistory && data.serviceHistory.records && data.serviceHistory.reco
 <div style="page-break-inside: avoid; break-inside: avoid;">
     <div style="display: grid; grid-template-columns: repeat(2, 1fr); gap: 15px; margin-bottom: 25px;">
         
-        <!-- 6. Характеристики автомобиля -->
-        ${data.vehicleInfo ? `
+        <!-- 6. Характеристики автомобиля (только для полного отчета) -->
+        ${tariff === 'full' && data.vehicleInfo ? `
         <div style="background: #f8f9fa; border-radius: 12px; padding: 15px;">
             <h3 style="font-size: 14px; font-weight: bold; color: #2a2a5a; margin: 0 0 10px 0; padding-bottom: 8px; border-bottom: 2px solid #e0e0e0;">6. Характеристики ТС</h3>
             <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 8px; font-size: 11px;">
@@ -2196,8 +2196,8 @@ ${data.serviceHistory && data.serviceHistory.records && data.serviceHistory.reco
         </div>
         ` : ''}
         
-        <!-- 7. Информация о владельце -->
-        ${data.ownerInfo ? `
+        <!-- 7. Информация о владельце (только для полного отчета) -->
+        ${tariff === 'full' && data.ownerInfo ? `
         <div style="background: #f8f9fa; border-radius: 12px; padding: 15px;">
             <h3 style="font-size: 14px; font-weight: bold; color: #2a2a5a; margin: 0 0 10px 0; padding-bottom: 8px; border-bottom: 2px solid #e0e0e0;">7. Владелец</h3>
             <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 8px; font-size: 11px;">
