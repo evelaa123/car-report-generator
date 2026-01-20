@@ -7,29 +7,37 @@
 // ============================================
 // Система логирования
 // ============================================
+// ============================================
+// Система логирования с отправкой в Vercel
+// ============================================
 const Logger = {
     logs: [],
     maxLogs: 500,
+    sendQueue: [],
+    isSending: false,
     
     _formatTime() {
-        return new Date().toISOString().replace('T', ' ').slice(0, 19);
+        return new Date().toISOString();
     },
     
     _addLog(level, context, message, data = null) {
         const logEntry = {
-            time: this._formatTime(),
+            timestamp: this._formatTime(),
             level,
             context,
             message,
-            data: data ? JSON.stringify(data).slice(0, 500) : null
+            data: data ? (typeof data === 'object' ? JSON.stringify(data).slice(0, 1000) : String(data).slice(0, 1000)) : null,
+            userAgent: navigator.userAgent,
+            url: window.location.href
         };
         
+        // Локальное хранение
         this.logs.push(logEntry);
         if (this.logs.length > this.maxLogs) {
             this.logs.shift();
         }
         
-        // Вывод в консоль с цветами
+        // Вывод в консоль браузера
         const styles = {
             INFO: 'color: #2196F3',
             WARN: 'color: #FF9800; font-weight: bold',
@@ -38,14 +46,55 @@ const Logger = {
             DEBUG: 'color: #9E9E9E'
         };
         
-        const prefix = `[${logEntry.time}] [${level}] [${context}]`;
+        const prefix = `[${logEntry.timestamp}] [${level}] [${context}]`;
         if (data) {
             console.log(`%c${prefix} ${message}`, styles[level] || '', data);
         } else {
             console.log(`%c${prefix} ${message}`, styles[level] || '');
         }
         
+        // Отправка на сервер (для ERROR и WARN всегда, для остальных - в продакшене)
+        if (level === 'ERROR' || level === 'WARN' || !window.location.hostname.includes('localhost')) {
+            this._sendToServer(logEntry);
+        }
+        
         return logEntry;
+    },
+    
+    // Отправка логов на сервер с очередью и батчингом
+    _sendToServer(logEntry) {
+        this.sendQueue.push(logEntry);
+        
+        // Дебаунс - отправляем не чаще раза в секунду
+        if (!this.sendTimeout) {
+            this.sendTimeout = setTimeout(() => {
+                this._flushQueue();
+                this.sendTimeout = null;
+            }, 1000);
+        }
+    },
+    
+    async _flushQueue() {
+        if (this.sendQueue.length === 0 || this.isSending) return;
+        
+        this.isSending = true;
+        const logsToSend = [...this.sendQueue];
+        this.sendQueue = [];
+        
+        try {
+            // Отправляем каждый лог (или можно батчить)
+            for (const log of logsToSend) {
+                await fetch('/api/log', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify(log)
+                }).catch(() => {}); // Игнорируем ошибки отправки логов
+            }
+        } catch (e) {
+            // Тихо игнорируем ошибки логирования
+        } finally {
+            this.isSending = false;
+        }
     },
     
     info(context, message, data = null) {
@@ -58,7 +107,6 @@ const Logger = {
     
     error(context, message, data = null) {
         const entry = this._addLog('ERROR', context, message, data);
-        // Всегда показываем ошибку пользователю
         this._showErrorToUser(context, message, data);
         return entry;
     },
@@ -72,7 +120,6 @@ const Logger = {
     },
     
     _showErrorToUser(context, message, data) {
-        // Формируем понятное сообщение для пользователя
         let userMessage = message;
         if (data) {
             if (typeof data === 'object' && data.message) {
@@ -84,14 +131,12 @@ const Logger = {
         showToast(`[${context}] ${userMessage}`, 'error');
     },
     
-    // Получить все логи для экспорта
     export() {
         return this.logs.map(l => 
-            `${l.time} [${l.level}] [${l.context}] ${l.message}${l.data ? ' | ' + l.data : ''}`
+            `${l.timestamp} [${l.level}] [${l.context}] ${l.message}${l.data ? ' | ' + l.data : ''}`
         ).join('\n');
     },
     
-    // Скачать логи
     download() {
         const content = this.export();
         const blob = new Blob([content], { type: 'text/plain' });
@@ -101,16 +146,9 @@ const Logger = {
         a.download = `car-report-logs-${new Date().toISOString().slice(0, 10)}.txt`;
         a.click();
         URL.revokeObjectURL(url);
-    },
-    
-    // Показать в консоли
-    show() {
-        console.log('=== ВСЕ ЛОГИ ===');
-        this.logs.forEach(l => {
-            console.log(`${l.time} [${l.level}] [${l.context}] ${l.message}`);
-        });
     }
 };
+
 
 // Глобальный обработчик необработанных ошибок
 window.onerror = function(message, source, lineno, colno, error) {
