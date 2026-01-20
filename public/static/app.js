@@ -1182,7 +1182,7 @@ function getSystemPrompt() {
 - Перечисляй ВСЕ замененные детали и ремонтные работы
 - ИТОГ БЕЗ КИТАЙСКИХ СИМВОЛОВ
 - ВСЕ ЗНАЧЕНИЯ В ПРИМЕРЕ НИЖЕ - ЭТО ТОЛЬКО ПРИМЕРЫ ФОРМАТА! Заполни РЕАЛЬНЫМИ данными из изображений!
-- НЕ УПОМИНАЙ источник данных, просто предоставь информацию
+- НЕ УПОМИНАЙ источник данных, просто предоставь информацию НЕ УПОМИЕАЙ ИЗОБРАЖЕНИЯ! 
 - НЕ УПОМИНАЙ МОДЕЛЬ ТОЛЬКО МАРУ И НЕ УПОМИНАЙ ЦВЕТ
 БЛОК ОТЗЫВНЫХ КАМПАНИЙ (召回记录):
 Если на изображениях есть информация об отзывных кампаниях производителя (召回记录), обязательно включи её в поле "recallRecords". Это информация о заводских дефектах и их устранении.
@@ -1948,27 +1948,29 @@ function generateHTMLReport(data, tariff = 'full') {
     ${data.components ? `
     <div style="margin-bottom: 25px; background: #f8f9fa; border-radius: 12px; padding: 20px;">
         <h2 style="font-size: 18px; font-weight: bold; color: #2a2a5a; margin: 0 0 15px 0; padding-bottom: 10px; border-bottom: 2px solid #e0e0e0;">2. Ключевые узлы автомобиля</h2>
-        <div style="display: grid; grid-template-columns: repeat(2, 1fr); gap: 10px;">
-            ${generateComponentHTML('Подушки безопасности', data.components.airbags)}
-            ${generateComponentHTML('Ремни безопасности', data.components.seatbelts)}
-            ${generateComponentHTML('Передний/задний мосты', data.components.axles)}
-            ${generateComponentHTML('Подвеска', data.components.suspension)}
-            ${generateComponentHTML('Рулевое управление', data.components.steering)}
-            ${generateComponentHTML('Тормозная система', data.components.brakes)}
-            ${generateComponentHTML('Система кондиционирования', data.components.airConditioner)}
-        </div>
-        ${data.components.airConditioner?.status === 'problem' ? `
-        <div style="margin-top: 15px; padding: 15px; background: #fff3cd; border-radius: 8px; border-left: 4px solid #ffc107;">
-            <strong>⚠️ Система кондиционирования:</strong> обнаружена проблема<br>
-            ${data.components.airConditioner.date ? `<span style="color: #666;">Дата: ${data.components.airConditioner.date}</span><br>` : ''}
-            ${data.components.airConditioner.description ? `<span style="color: #666;">${data.components.airConditioner.description}</span>` : ''}
-        </div>
-        ` : ''}
+        <table style="width: 100%; border-collapse: collapse;">
+            <thead>
+                <tr style="background: #e9ecef;">
+                    <th style="padding: 10px; text-align: left; font-weight: 600; color: #495057; border-bottom: 2px solid #dee2e6;">Узел</th>
+                    <th style="padding: 10px; text-align: center; font-weight: 600; color: #495057; border-bottom: 2px solid #dee2e6;">Состояние</th>
+                    <th style="padding: 10px; text-align: left; font-weight: 600; color: #495057; border-bottom: 2px solid #dee2e6;">Примечание</th>
+                </tr>
+            </thead>
+            <tbody>
+                ${generateComponentTableRow('Подушки безопасности', data.components.airbags)}
+                ${generateComponentTableRow('Ремни безопасности', data.components.seatbelts)}
+                ${generateComponentTableRow('Передний/задний мосты', data.components.axles)}
+                ${generateComponentTableRow('Подвеска', data.components.suspension)}
+                ${generateComponentTableRow('Рулевое управление', data.components.steering)}
+                ${generateComponentTableRow('Тормозная система', data.components.brakes)}
+                ${generateComponentTableRow('Система кондиционирования', data.components.airConditioner)}
+            </tbody>
+        </table>
     </div>
     ` : ''}
     
-    <!-- 2.5. Карта ремонта деталей -->
-${data.bodyRepairMap ? `
+    <!-- 2.5. Карта ремонта деталей (только для полного отчета) -->
+${tariff === 'full' && data.bodyRepairMap ? `
 <div style="page-break-inside: avoid; margin-bottom: 25px; background: #f8f9fa; border-radius: 12px; padding: 20px;">
     <h2 style="font-size: 18px; font-weight: bold; color: #2a2a5a; margin: 0 0 15px 0; padding-bottom: 10px; border-bottom: 2px solid #e0e0e0;">Карта ремонта / замены деталей</h2>
     
@@ -2007,8 +2009,8 @@ ${data.bodyRepairMap ? `
 </div>
 ` : ''}
 
-<!-- 2.6. Проверка каркаса -->
-${data.frameCheck ? `
+<!-- 2.6. Проверка каркаса (только для полного отчета) -->
+${tariff === 'full' && data.frameCheck ? `
 <div style="margin-bottom: 25px; background: #f8f9fa; border-radius: 12px; padding: 20px;">
     <h2 style="font-size: 18px; font-weight: bold; color: #2a2a5a; margin: 0 0 15px 0; padding-bottom: 10px; border-bottom: 2px solid #e0e0e0;">Проверка каркаса кузова</h2>
     
@@ -2025,8 +2027,8 @@ ${data.frameCheck ? `
 </div>
 ` : ''}
 
-<!-- 2.7. Детальная проверка силовой структуры кузова -->
-${data.structuralElements ? `
+<!-- 2.7. Детальная проверка силовой структуры кузова (только для полного отчета) -->
+${tariff === 'full' && data.structuralElements ? `
 <div style="margin-bottom: 25px; background: #f8f9fa; border-radius: 12px; padding: 20px;">
     <h2 style="font-size: 18px; font-weight: bold; color: #2a2a5a; margin: 0 0 15px 0; padding-bottom: 10px; border-bottom: 2px solid #e0e0e0;">Проверка ДТП и силовой структуры</h2>
     <h3 style="font-size: 14px; color: #666; margin-bottom: 10px;">Проверенные элементы</h3>
@@ -2048,8 +2050,8 @@ ${data.structuralElements ? `
 </div>
 ` : ''}
 
-<!-- 2.8. Кузов и внешний вид -->
-${data.bodyParts ? `
+<!-- 2.8. Кузов и внешний вид (только для полного отчета) -->
+${tariff === 'full' && data.bodyParts ? `
 <div style="margin-bottom: 25px; background: #f8f9fa; border-radius: 12px; padding: 20px;">
     <h2 style="font-size: 18px; font-weight: bold; color: #2a2a5a; margin: 0 0 15px 0; padding-bottom: 10px; border-bottom: 2px solid #e0e0e0;">Кузов и внешний вид</h2>
     
@@ -2223,7 +2225,7 @@ ${data.serviceHistory && data.serviceHistory.records && data.serviceHistory.reco
         <!-- 9. Итоговая оценка -->
         ${data.conclusion ? `
         <div style="background: linear-gradient(135deg, #e8f5e9, #c8e6c9); border-radius: 12px; padding: 15px;">
-            <h3 style="font-size: 14px; font-weight: bold; color: #2a2a5a; margin: 0 0 10px 0; padding-bottom: 8px; border-bottom: 2px solid #a5d6a7;">9. Итоговая оценка</h3>
+            <h3 style="font-size: 14px; font-weight: bold; color: #2a2a5a; margin: 0 0 10px 0; padding-bottom: 8px; border-bottom: 2px solid #a5d6a7;">Итоговая оценка</h3>
             <div style="font-size: 11px;">
                 <div style="display: flex; align-items: center; gap: 8px; margin-bottom: 5px;">
                     <span style="color: ${data.conclusion.accidents === 'Не зафиксировано' || data.conclusion.accidents === 'Нет' ? '#28a745' : '#dc3545'}; font-size: 16px;">${data.conclusion.accidents === 'Не зафиксировано' || data.conclusion.accidents === 'Нет' ? '✓' : '✗'}</span>
@@ -2496,11 +2498,31 @@ function generateBodyPartElement(name, part) {
 
 function generateComponentHTML(name, component) {
     const isOk = !component || component.status === 'ok' || !component.status;
+    const statusText = isOk ? 'Норма' : 'Проблема';
+    const note = component?.note || component?.description || '';
+    const date = component?.date || '';
     return `
-    <div style="display: flex; align-items: center; gap: 10px; padding: 10px; background: white; border-radius: 8px;">
-        <div style="width: 24px; height: 24px; border-radius: 50%; background: ${isOk ? '#d4edda' : '#f8d7da'}; color: ${isOk ? '#28a745' : '#dc3545'}; display: flex; align-items: center; justify-content: center; font-weight: bold; font-size: 14px;">${isOk ? '✔' : '❌'}</div>
-        <span style="font-size: 13px;">${name}</span>
+    <div style="display: flex; justify-content: space-between; align-items: center; padding: 8px 12px; background: white; border-radius: 6px; border-left: 3px solid ${isOk ? '#28a745' : '#dc3545'};">
+        <span style="font-size: 13px; color: #333;">${name}</span>
+        <span style="font-size: 12px; font-weight: 600; color: ${isOk ? '#28a745' : '#dc3545'};">${statusText}${date ? ' (' + date + ')' : ''}</span>
     </div>
+    `;
+}
+
+function generateComponentTableRow(name, component) {
+    const isOk = !component || component.status === 'ok' || !component.status;
+    const statusText = isOk ? 'Норма' : 'Проблема';
+    const note = component?.note || component?.description || '';
+    const date = component?.date || '';
+    const noteText = note ? note + (date ? ` (${date})` : '') : (date ? date : '—');
+    return `
+    <tr style="border-bottom: 1px solid #e0e0e0;">
+        <td style="padding: 10px; font-size: 13px; color: #333;">${name}</td>
+        <td style="padding: 10px; text-align: center;">
+            <span style="font-size: 12px; font-weight: 600; color: ${isOk ? '#28a745' : '#dc3545'};">${statusText}</span>
+        </td>
+        <td style="padding: 10px; font-size: 12px; color: #666;">${noteText}</td>
+    </tr>
     `;
 }
 
