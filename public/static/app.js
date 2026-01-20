@@ -1,7 +1,138 @@
 // ============================================
 // Генератор Отчётов Авто - Главный JavaScript
-// Версия 2.0 - С поддержкой Gemini, PDF, Google Docs
+// Версия 2.1 - С поддержкой Gemini, PDF, Google Docs
+// Улучшенное логирование и обработка ошибок
 // ============================================
+
+// ============================================
+// Система логирования
+// ============================================
+const Logger = {
+    logs: [],
+    maxLogs: 500,
+    
+    _formatTime() {
+        return new Date().toISOString().replace('T', ' ').slice(0, 19);
+    },
+    
+    _addLog(level, context, message, data = null) {
+        const logEntry = {
+            time: this._formatTime(),
+            level,
+            context,
+            message,
+            data: data ? JSON.stringify(data).slice(0, 500) : null
+        };
+        
+        this.logs.push(logEntry);
+        if (this.logs.length > this.maxLogs) {
+            this.logs.shift();
+        }
+        
+        // Вывод в консоль с цветами
+        const styles = {
+            INFO: 'color: #2196F3',
+            WARN: 'color: #FF9800; font-weight: bold',
+            ERROR: 'color: #F44336; font-weight: bold',
+            SUCCESS: 'color: #4CAF50',
+            DEBUG: 'color: #9E9E9E'
+        };
+        
+        const prefix = `[${logEntry.time}] [${level}] [${context}]`;
+        if (data) {
+            console.log(`%c${prefix} ${message}`, styles[level] || '', data);
+        } else {
+            console.log(`%c${prefix} ${message}`, styles[level] || '');
+        }
+        
+        return logEntry;
+    },
+    
+    info(context, message, data = null) {
+        return this._addLog('INFO', context, message, data);
+    },
+    
+    warn(context, message, data = null) {
+        return this._addLog('WARN', context, message, data);
+    },
+    
+    error(context, message, data = null) {
+        const entry = this._addLog('ERROR', context, message, data);
+        // Всегда показываем ошибку пользователю
+        this._showErrorToUser(context, message, data);
+        return entry;
+    },
+    
+    success(context, message, data = null) {
+        return this._addLog('SUCCESS', context, message, data);
+    },
+    
+    debug(context, message, data = null) {
+        return this._addLog('DEBUG', context, message, data);
+    },
+    
+    _showErrorToUser(context, message, data) {
+        // Формируем понятное сообщение для пользователя
+        let userMessage = message;
+        if (data) {
+            if (typeof data === 'object' && data.message) {
+                userMessage = `${message}: ${data.message}`;
+            } else if (typeof data === 'string') {
+                userMessage = `${message}: ${data}`;
+            }
+        }
+        showToast(`[${context}] ${userMessage}`, 'error');
+    },
+    
+    // Получить все логи для экспорта
+    export() {
+        return this.logs.map(l => 
+            `${l.time} [${l.level}] [${l.context}] ${l.message}${l.data ? ' | ' + l.data : ''}`
+        ).join('\n');
+    },
+    
+    // Скачать логи
+    download() {
+        const content = this.export();
+        const blob = new Blob([content], { type: 'text/plain' });
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        a.href = url;
+        a.download = `car-report-logs-${new Date().toISOString().slice(0, 10)}.txt`;
+        a.click();
+        URL.revokeObjectURL(url);
+    },
+    
+    // Показать в консоли
+    show() {
+        console.log('=== ВСЕ ЛОГИ ===');
+        this.logs.forEach(l => {
+            console.log(`${l.time} [${l.level}] [${l.context}] ${l.message}`);
+        });
+    }
+};
+
+// Глобальный обработчик необработанных ошибок
+window.onerror = function(message, source, lineno, colno, error) {
+    Logger.error('Global', `Необработанная ошибка: ${message}`, {
+        source: source?.split('/').pop(),
+        line: lineno,
+        col: colno,
+        stack: error?.stack?.slice(0, 300)
+    });
+    return false; // Не подавлять ошибку
+};
+
+// Глобальный обработчик необработанных Promise rejection
+window.addEventListener('unhandledrejection', function(event) {
+    Logger.error('Promise', `Необработанный Promise rejection`, {
+        reason: event.reason?.message || event.reason || 'Неизвестно',
+        stack: event.reason?.stack?.slice(0, 300)
+    });
+});
+
+// Делаем Logger доступным глобально для отладки
+window.Logger = Logger;
 
 // Определяем режим работы (Electron или Web)
 const isElectron = typeof require !== 'undefined';
@@ -40,10 +171,16 @@ const CHUNK_HEIGHT = 3000; // Высота чанка для разбивки д
 // ============================================
 
 document.addEventListener('DOMContentLoaded', async () => {
-    await loadData();
-    await loadSettings();
-    updateUI();
-    initGoogleAuth();
+    Logger.info('App', 'Инициализация приложения...', { isElectron });
+    try {
+        await loadData();
+        await loadSettings();
+        updateUI();
+        initGoogleAuth();
+        Logger.success('App', 'Приложение успешно инициализировано');
+    } catch (error) {
+        Logger.error('App', 'Ошибка инициализации', { message: error.message, stack: error.stack?.slice(0, 200) });
+    }
 });
 function sanitizeForFilename(str) {
     // Заменяем недопустимые символы на подчёркивание
@@ -107,17 +244,23 @@ function handleGoogleSignIn(response) {
 // ============================================
 
 async function loadData() {
-    if (isElectron) {
-        const data = await ipcRenderer.invoke('load-data');
-        appState.reports = data.reports || [];
-        appState.cars = data.cars || {};
-    } else {
-        const data = localStorage.getItem('carReportsData');
-        if (data) {
-            const parsed = JSON.parse(data);
-            appState.reports = parsed.reports || [];
-            appState.cars = parsed.cars || {};
+    Logger.info('Data', 'Загрузка данных...');
+    try {
+        if (isElectron) {
+            const data = await ipcRenderer.invoke('load-data');
+            appState.reports = data.reports || [];
+            appState.cars = data.cars || {};
+        } else {
+            const data = localStorage.getItem('carReportsData');
+            if (data) {
+                const parsed = JSON.parse(data);
+                appState.reports = parsed.reports || [];
+                appState.cars = parsed.cars || {};
+            }
         }
+        Logger.success('Data', 'Данные загружены', { reportsCount: appState.reports.length });
+    } catch (error) {
+        Logger.error('Data', 'Ошибка загрузки данных', { message: error.message });
     }
 }
 
@@ -127,10 +270,15 @@ async function saveData() {
         cars: appState.cars
     };
     
-    if (isElectron) {
-        await ipcRenderer.invoke('save-data', data);
-    } else {
-        localStorage.setItem('carReportsData', JSON.stringify(data));
+    try {
+        if (isElectron) {
+            await ipcRenderer.invoke('save-data', data);
+        } else {
+            localStorage.setItem('carReportsData', JSON.stringify(data));
+        }
+        Logger.debug('Data', 'Данные сохранены', { reportsCount: appState.reports.length });
+    } catch (error) {
+        Logger.error('Data', 'Ошибка сохранения данных', { message: error.message });
     }
 }
 
@@ -1007,7 +1155,10 @@ function repairIncompleteJSON(jsonStr) {
 // ============================================
 
 async function generateReport() {
+    Logger.info('GenerateReport', 'Начало генерации отчёта', { imagesCount: appState.images.length });
+    
     if (appState.images.length === 0) {
+        Logger.warn('GenerateReport', 'Попытка генерации без изображений');
         showToast('Загрузите изображения', 'error');
         return;
     }
@@ -1015,7 +1166,10 @@ async function generateReport() {
     const provider = appState.settings.aiProvider || 'openai';
     const apiKey = provider === 'gemini' ? appState.settings.geminiKey : appState.settings.openaiKey;
     
+    Logger.info('GenerateReport', `Используемый провайдер: ${provider}`);
+    
     if (!apiKey) {
+        Logger.warn('GenerateReport', `API ключ ${provider} не указан`);
         showToast(`Укажите API ключ ${provider === 'gemini' ? 'Gemini' : 'OpenAI'} в настройках`, 'error');
         showPage('settings');
         return;
@@ -1026,17 +1180,25 @@ async function generateReport() {
     
     try {
         updateProgress('Подготовка изображений...', 10);
+        Logger.info('GenerateReport', 'Подготовка изображений', { count: appState.images.length });
         
         const systemPrompt = getSystemPrompt();
         const userPrompt = 'Проанализируй эти скриншоты китайского отчёта об автомобиле и извлеки всю информацию в указанном JSON формате. Переведи все китайские тексты на русский. Верни ТОЛЬКО валидный JSON без дополнительного текста.';
         
         updateProgress(`Отправка на анализ (${provider === 'gemini' ? 'Gemini' : 'GPT'})...`, 30);
+        Logger.info('GenerateReport', `Отправка запроса к ${provider} API`);
         
         let content;
-        if (provider === 'gemini') {
-            content = await callGeminiAPI(apiKey, systemPrompt, userPrompt);
-        } else {
-            content = await callOpenAIAPI(apiKey, systemPrompt, userPrompt);
+        try {
+            if (provider === 'gemini') {
+                content = await callGeminiAPI(apiKey, systemPrompt, userPrompt);
+            } else {
+                content = await callOpenAIAPI(apiKey, systemPrompt, userPrompt);
+            }
+            Logger.success('GenerateReport', `Ответ от ${provider} получен`, { length: content?.length });
+        } catch (apiError) {
+            Logger.error('API', `Ошибка ${provider} API`, { message: apiError.message });
+            throw apiError;
         }
         
         updateProgress('Обработка ответа...', 70);
@@ -1055,16 +1217,20 @@ async function generateReport() {
                 let jsonStr = jsonMatch[0];
                 try {
                     reportData = JSON.parse(jsonStr);
+                    Logger.success('GenerateReport', 'JSON успешно распарсен');
                 } catch (parseError) {
+                    Logger.warn('GenerateReport', 'Попытка восстановить JSON', { error: parseError.message });
                     jsonStr = repairIncompleteJSON(jsonStr);
                     reportData = JSON.parse(jsonStr);
+                    Logger.success('GenerateReport', 'JSON восстановлен и распарсен');
                 }
             } else {
                 throw new Error('JSON не найден в ответе ИИ');
             }
         } catch (e) {
-            console.error('Parse error:', e);
+            Logger.error('GenerateReport', 'Ошибка парсинга JSON', { error: e.message, contentPreview: content?.slice(0, 200) });
             reportData = { rawContent: content, brand: 'Ошибка парсинга', vin: 'Неизвестно' };
+            showToast('Предупреждение: ошибка парсинга ответа ИИ', 'warning');
         }
         
         // Создание отчётов
@@ -1166,10 +1332,13 @@ setTimeout(() => {
 
         
     } catch (error) {
-        console.error('Generation error:', error);
+        Logger.error('GenerateReport', 'Критическая ошибка генерации', { 
+            message: error.message, 
+            stack: error.stack?.slice(0, 300) 
+        });
         document.getElementById('progress-section').classList.add('hidden');
         document.getElementById('generate-section').classList.remove('hidden');
-        showToast(`Ошибка: ${error.message}`, 'error');
+        // showToast уже вызывается в Logger.error
     }
 }
 
@@ -1184,6 +1353,13 @@ function getSystemPrompt() {
 - ВСЕ ЗНАЧЕНИЯ В ПРИМЕРЕ НИЖЕ - ЭТО ТОЛЬКО ПРИМЕРЫ ФОРМАТА! Заполни РЕАЛЬНЫМИ данными из изображений!
 - НЕ УПОМИНАЙ источник данных, просто предоставь информацию НЕ УПОМИЕАЙ ИЗОБРАЖЕНИЯ! 
 - НЕ УПОМИНАЙ МОДЕЛЬ ТОЛЬКО МАРУ И НЕ УПОМИНАЙ ЦВЕТ
+
+КРИТИЧЕСКИ ВАЖНО для блока components (ключевые узлы):
+- Если на скриншотах НЕТ ИНФОРМАЦИИ о состоянии узла - используй status: "no_data" (НЕ "problem"!)
+- status: "ok" - только если есть явное подтверждение что узел в норме
+- status: "problem" - только если есть явная информация о проблеме или ремонте данного узла
+- status: "no_data" - если информация по данному узлу отсутствует на скриншотах
+- "Проблема" НЕ РАВНО "Нет данных"! Отсутствие информации = "no_data"
 БЛОК ОТЗЫВНЫХ КАМПАНИЙ (召回记录):
 Если на изображениях есть информация об отзывных кампаниях производителя (召回记录), обязательно включи её в поле "recallRecords". Это информация о заводских дефектах и их устранении.
 
@@ -1222,10 +1398,10 @@ function getSystemPrompt() {
     "airbags": {"status": "ok", "note": ""},
     "seatbelts": {"status": "ok", "note": ""},
     "axles": {"status": "ok", "note": ""},
-    "suspension": {"status": "ok", "note": ""},
-    "steering": {"status": "ok", "note": ""},
+    "suspension": {"status": "no_data", "note": ""},
+    "steering": {"status": "problem", "date": "12/2022", "description": "Замена левого рулевого наконечника/тяги по страховому ремонту"},
     "brakes": {"status": "ok", "note": ""},
-    "airConditioner": {"status": "problem", "date": "06/2023", "description": "Проверка протечек в испарителе кондиционера"}
+    "airConditioner": {"status": "no_data", "note": ""}
   },
   
   "bodyRepairMap": {
@@ -1446,6 +1622,8 @@ function getSystemPrompt() {
 
 // Вызов OpenAI API
 async function callOpenAIAPI(apiKey, systemPrompt, userPrompt) {
+    Logger.info('OpenAI', 'Начало запроса к OpenAI API', { imagesCount: appState.images.length });
+    
     const imageContents = appState.images.map(img => ({
         type: 'image_url',
         image_url: {
@@ -1454,34 +1632,51 @@ async function callOpenAIAPI(apiKey, systemPrompt, userPrompt) {
         }
     }));
     
-    const response = await fetch('https://api.openai.com/v1/chat/completions', {
-        method: 'POST',
-        headers: {
-            'Content-Type': 'application/json',
-            'Authorization': `Bearer ${apiKey}`
-        },
-        body: JSON.stringify({
-            model: 'gpt-5.2',
-            messages: [
-                { role: 'system', content: systemPrompt },
-                { 
-                    role: 'user', 
-                    content: [
-                        { type: 'text', text: userPrompt },
-                        ...imageContents
-                    ]
-                }
-            ],
-            max_completion_tokens: 8192
-        })
-    });
+    let response;
+    try {
+        response = await fetch('https://api.openai.com/v1/chat/completions', {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+                'Authorization': `Bearer ${apiKey}`
+            },
+            body: JSON.stringify({
+                model: 'gpt-4o',
+                messages: [
+                    { role: 'system', content: systemPrompt },
+                    { 
+                        role: 'user', 
+                        content: [
+                            { type: 'text', text: userPrompt },
+                            ...imageContents
+                        ]
+                    }
+                ],
+                max_completion_tokens: 8192
+            })
+        });
+    } catch (networkError) {
+        Logger.error('OpenAI', 'Сетевая ошибка при запросе к OpenAI', { message: networkError.message });
+        throw new Error(`Сетевая ошибка: ${networkError.message}. Проверьте интернет-соединение.`);
+    }
     
     if (!response.ok) {
         const errorText = await response.text();
-        throw new Error(`OpenAI API Error: ${response.status} - ${errorText}`);
+        Logger.error('OpenAI', `API вернул ошибку ${response.status}`, { status: response.status, error: errorText.slice(0, 300) });
+        
+        // Разбираем распространённые ошибки
+        if (response.status === 401) {
+            throw new Error('Неверный API ключ OpenAI. Проверьте ключ в настройках.');
+        } else if (response.status === 429) {
+            throw new Error('Превышен лимит запросов OpenAI. Подождите немного.');
+        } else if (response.status === 500 || response.status === 502 || response.status === 503) {
+            throw new Error('Сервер OpenAI временно недоступен. Попробуйте позже.');
+        }
+        throw new Error(`OpenAI API Error: ${response.status} - ${errorText.slice(0, 200)}`);
     }
     
     const data = await response.json();
+    Logger.success('OpenAI', 'Ответ успешно получен');
     return data.choices[0].message.content;
 }
 async function openDriveLink() {
@@ -1516,12 +1711,13 @@ async function openDriveLink() {
 }
 
 async function uploadOrUpdateDriveFile() {
+    Logger.info('Drive', 'Начало загрузки/обновления файла в Drive');
     
     // Если ссылки нет - загружаем в Drive
     if (!isElectron) {
         // ЛОГИКА ДЛЯ ВЕБА
         try {
-            console.log('[Drive Upload] Starting upload process...');
+            Logger.info('Drive', 'Запуск процесса загрузки...');
             showToast('Авторизация Google Drive...', 'info');
             
             const accessToken = await getGoogleAccessToken();
@@ -1672,8 +1868,8 @@ async function uploadOrUpdateDriveFile() {
             window.open(urlWithCache, '_blank');
             
         } catch (error) {
-            console.error('[Drive Upload] Error:', error);
-            showToast('Ошибка загрузки в Drive: ' + error.message, 'error');
+            Logger.error('Drive', 'Ошибка загрузки в Drive', { message: error.message, stack: error.stack?.slice(0, 200) });
+            // showToast вызывается в Logger.error
         }
         return;
     }
@@ -1794,6 +1990,8 @@ function copyReportLink() {
 
 // Вызов Gemini API
 async function callGeminiAPI(apiKey, systemPrompt, userPrompt) {
+    Logger.info('Gemini', 'Начало запроса к Gemini API', { imagesCount: appState.images.length });
+    
     const imageParts = appState.images.map(img => {
         const base64Data = img.data.split(',')[1];
         const mimeType = img.data.split(';')[0].split(':')[1] || 'image/jpeg';
@@ -1805,36 +2003,63 @@ async function callGeminiAPI(apiKey, systemPrompt, userPrompt) {
         };
     });
     
-    const response = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=${apiKey}`, {
-        method: 'POST',
-        headers: {
-            'Content-Type': 'application/json'
-        },
-        body: JSON.stringify({
-            contents: [{
-                parts: [
-                    { text: systemPrompt + '\n\n' + userPrompt },
-                    ...imageParts
-                ]
-            }],
-            generationConfig: {
-                temperature: 0.2,
-                maxOutputTokens: 16384
-            }
-        })
-    });
+    let response;
+    try {
+        response = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=${apiKey}`, {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json'
+            },
+            body: JSON.stringify({
+                contents: [{
+                    parts: [
+                        { text: systemPrompt + '\n\n' + userPrompt },
+                        ...imageParts
+                    ]
+                }],
+                generationConfig: {
+                    temperature: 0.2,
+                    maxOutputTokens: 16384
+                }
+            })
+        });
+    } catch (networkError) {
+        Logger.error('Gemini', 'Сетевая ошибка при запросе к Gemini', { message: networkError.message });
+        throw new Error(`Сетевая ошибка: ${networkError.message}. Проверьте интернет-соединение.`);
+    }
     
     if (!response.ok) {
         const errorText = await response.text();
-        throw new Error(`Gemini API Error: ${response.status} - ${errorText}`);
+        Logger.error('Gemini', `API вернул ошибку ${response.status}`, { status: response.status, error: errorText.slice(0, 300) });
+        
+        // Разбираем распространённые ошибки
+        if (response.status === 400) {
+            if (errorText.includes('API_KEY_INVALID')) {
+                throw new Error('Неверный API ключ Gemini. Проверьте ключ в настройках.');
+            }
+            throw new Error('Ошибка запроса к Gemini. Проверьте API ключ.');
+        } else if (response.status === 429) {
+            throw new Error('Превышен лимит запросов Gemini. Подождите немного.');
+        } else if (response.status === 500 || response.status === 503) {
+            throw new Error('Сервер Gemini временно недоступен. Попробуйте позже.');
+        }
+        throw new Error(`Gemini API Error: ${response.status} - ${errorText.slice(0, 200)}`);
     }
     
     const data = await response.json();
     
     if (data.candidates && data.candidates[0] && data.candidates[0].content) {
+        Logger.success('Gemini', 'Ответ успешно получен');
         return data.candidates[0].content.parts[0].text;
     }
     
+    // Проверяем на блокировку контента
+    if (data.candidates && data.candidates[0] && data.candidates[0].finishReason === 'SAFETY') {
+        Logger.error('Gemini', 'Контент заблокирован фильтром безопасности');
+        throw new Error('Контент заблокирован фильтром безопасности Gemini.');
+    }
+    
+    Logger.error('Gemini', 'Неожиданный формат ответа', { data });
     throw new Error('Неожиданный формат ответа от Gemini');
 }
 
@@ -2510,16 +2735,37 @@ function generateComponentHTML(name, component) {
 }
 
 function generateComponentTableRow(name, component) {
-    const isOk = !component || component.status === 'ok' || !component.status;
-    const statusText = isOk ? 'Норма' : 'Проблема';
-    const note = component?.note || component?.description || '';
-    const date = component?.date || '';
-    const noteText = note ? note + (date ? ` (${date})` : '') : (date ? date : '—');
+    // Определяем статус: ok, problem, no_data
+    const status = component?.status || 'no_data';
+    const isOk = status === 'ok';
+    const isNoData = status === 'no_data' || !component;
+    const isProblem = status === 'problem';
+    
+    let statusText, statusColor;
+    if (isNoData) {
+        statusText = 'Нет данных';
+        statusColor = '#888888';
+    } else if (isOk) {
+        statusText = 'Норма';
+        statusColor = '#28a745';
+    } else {
+        statusText = 'Проблема';
+        statusColor = '#dc3545';
+    }
+    
+    // Примечание: если нет данных - ставим прочерк
+    let noteText = '—';
+    if (!isNoData) {
+        const note = component?.note || component?.description || '';
+        const date = component?.date || '';
+        noteText = note ? note + (date ? ` (${date})` : '') : (date ? date : '—');
+    }
+    
     return `
     <tr style="border-bottom: 1px solid #e0e0e0;">
         <td style="padding: 10px; font-size: 13px; color: #333;">${name}</td>
         <td style="padding: 10px; text-align: center;">
-            <span style="font-size: 12px; font-weight: 600; color: ${isOk ? '#28a745' : '#dc3545'};">${statusText}</span>
+            <span style="font-size: 12px; font-weight: 600; color: ${statusColor};">${statusText}</span>
         </td>
         <td style="padding: 10px; font-size: 12px; color: #666;">${noteText}</td>
     </tr>
@@ -2531,14 +2777,22 @@ function generateComponentTableRow(name, component) {
 // ============================================
 
 async function exportToPDF() {
-    if (!appState.currentReport) return;
+    Logger.info('PDF', 'Начало экспорта PDF');
+    
+    if (!appState.currentReport) {
+        Logger.warn('PDF', 'Нет текущего отчёта для экспорта');
+        showToast('Нет отчёта для экспорта', 'warning');
+        return;
+    }
     
     const filename = `${sanitizeForFilename(appState.currentReport.vin)}_${formatDateForFile(appState.currentReport.createdAt)}.pdf`;
+    Logger.info('PDF', `Имя файла: ${filename}`);
 
     if (!isElectron) {
         // ЛОГИКА ДЛЯ ВЕБА - используем API
         try {
             showToast('Генерация PDF...', 'info');
+            Logger.info('PDF', 'Отправка запроса на генерацию PDF');
             
             const response = await fetch('/api/generate-pdf', {
                 method: 'POST',
@@ -2549,15 +2803,14 @@ async function exportToPDF() {
             });
 
             if (!response.ok) {
+                Logger.error('PDF', `HTTP ошибка ${response.status}`);
                 throw new Error(`HTTP error! status: ${response.status}`);
             }
 
             const result = await response.json();
             
             if (result.success && result.pdfBase64) {
-                console.log('PDF base64 length:', result.pdfBase64.length);
-                console.log('PDF base64 first 100 chars:', result.pdfBase64.substring(0, 100));
-                console.log('PDF base64 type:', typeof result.pdfBase64);
+                Logger.success('PDF', 'PDF сгенерирован', { length: result.pdfBase64.length });
                 
                 // Скачиваем PDF
                 const blob = base64ToBlob(result.pdfBase64, 'application/pdf');
@@ -2574,13 +2827,14 @@ async function exportToPDF() {
                 appState.currentReport.pdfBase64 = result.pdfBase64;
                 await saveData();
                 
+                Logger.success('PDF', 'PDF успешно скачан');
                 showToast('PDF успешно скачан!', 'success');
             } else {
                 throw new Error(result.error || 'Не удалось получить PDF');
             }
         } catch (error) {
-            console.error('Web PDF Error:', error);
-            showToast('Ошибка генерации PDF: ' + error.message, 'error');
+            Logger.error('PDF', 'Ошибка генерации PDF', { message: error.message });
+            // showToast вызывается в Logger.error
         }
         return;
     }
@@ -2838,7 +3092,19 @@ function toggleKeyVisibility(inputId) {
 
 function showToast(message, type = 'info') {
     const container = document.getElementById('toast-container');
-    if (!container) return;
+    if (!container) {
+        // Если контейнер не найден, выводим в консоль
+        console.log(`[Toast ${type.toUpperCase()}] ${message}`);
+        return;
+    }
+    
+    // Логируем toast (кроме случаев, когда вызвано из Logger)
+    if (typeof Logger !== 'undefined' && !message.startsWith('[')) {
+        const logMethod = type === 'error' ? 'warn' : (type === 'success' ? 'success' : 'info');
+        // Не вызываем Logger для обычных toast, чтобы избежать рекурсии
+        // Но записываем в консоль
+        console.log(`[Toast ${type.toUpperCase()}] ${message}`);
+    }
     
     const colors = {
         success: 'bg-green-600',
@@ -2863,13 +3129,29 @@ function showToast(message, type = 'info') {
     
     container.appendChild(toast);
     
+    // Для ошибок показываем дольше
+    const duration = type === 'error' ? 5000 : 3000;
+    
     setTimeout(() => {
         toast.style.opacity = '0';
         toast.style.transform = 'translateX(100%)';
         toast.style.transition = 'all 0.3s ease';
         setTimeout(() => toast.remove(), 300);
-    }, 3000);
+    }, duration);
 }
+
+// Функция для скачивания логов (доступна из консоли и интерфейса)
+function downloadLogs() {
+    if (typeof Logger !== 'undefined') {
+        Logger.download();
+        showToast('Логи скачиваются...', 'info');
+    } else {
+        showToast('Система логирования не инициализирована', 'error');
+    }
+}
+
+// Делаем функцию доступной глобально
+window.downloadLogs = downloadLogs;
 
 // Обработка клавиш
 document.addEventListener('keydown', (e) => {
