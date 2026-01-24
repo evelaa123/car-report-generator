@@ -2621,50 +2621,304 @@ function generateInsuranceBlock(data) {
 }
 
 // Генерация краткого страхового отчёта
+// Генерация детального страхового отчёта
 function generateInsuranceReport(data) {
-    const logoSrc = appState.settings.logoBase64 || appState.settings.logoUrl;
+    const logoSrc = appState.settings.logoBase64 || appState.settings.logoUrl || '';
+    
+    // Функция для форматирования значений с единицами измерения
+    const formatWithUnit = (value, unit, skipIfHasUnit = true) => {
+        if (!value || value === '—') return '—';
+        const strValue = String(value).trim();
+        if (skipIfHasUnit && (strValue.includes(unit) || strValue.includes('км') || strValue.includes('год') || strValue.includes('kW') || strValue.includes('см'))) {
+            return strValue;
+        }
+        return `${strValue} ${unit}`;
+    };
 
-    // Страховой отчёт — фокус на страховой информации (без упоминания модели или цвета)
     return `
 <div class="report-container" style="font-family: 'Segoe UI', Arial, sans-serif; max-width: 900px; margin: 0 auto; color: #333; line-height: 1.6; background: white; padding: 30px;">
-    <div style="display: flex; justify-content: space-between; align-items: flex-start; margin-bottom: 20px;">
+    
+    <!-- Шапка с логотипом -->
+    <div style="display: flex; justify-content: space-between; align-items: flex-start; margin-bottom: 30px; padding-bottom: 20px; border-bottom: 3px solid #4a4a8a;">
         <div>
-            <h1 style="font-size: 26px; font-weight: bold; color: #2a2a5a; margin: 0;">Страховой отчёт</h1>
-            <p style="font-size: 16px; color: #666; margin-top: 6px;">${data.brand || ''}</p>
+            <h1 style="font-size: 26px; font-weight: bold; color: #2a2a5a; margin: 0;">Экспертный отчёт об автомобиле</h1>
+            <p style="font-size: 16px; color: #666; margin-top: 5px;">Отчёт о состоянии автомобиля</p>
         </div>
         ${logoSrc ? `<img src="${logoSrc}" alt="Logo" style="max-height: 70px; max-width: 180px; object-fit: contain;">` : ''}
     </div>
-
-    <div style="margin-bottom: 18px; background: #f8f9fa; border-radius: 12px; padding: 16px;">
-        <div style="display: grid; grid-template-columns: repeat(2, 1fr); gap: 12px; font-size: 13px;">
-            <div><span style="font-size: 11px; color: #888;">Марка</span>
-                <p style="font-size: 15px; font-weight: 600; margin: 5px 0 0 0;">${data.brand || '—'}</p></div>
-            <div><span style="font-size: 11px; color: #888;">VIN</span>
-                <p style="font-size: 15px; font-weight: 600; margin: 5px 0 0 0;">${data.vin || '—'}</p></div>
-            <div><span style="font-size: 11px; color: #888;">Рейтинг</span>
-                <p style="margin: 5px 0 0 0;"><span style="background: linear-gradient(135deg, #ffd700, #ffb800); color: #333; padding: 4px 12px; border-radius: 12px; font-weight: bold;">★ ${data.rating || '—'}</span></p></div>
-            <div><span style="font-size: 11px; color: #888;">Пробег</span>
-                <p style="font-size: 15px; font-weight: 600; margin: 5px 0 0 0;">${data.lastMileage || '—'}</p></div>
+    
+    <!-- 1. Общая информация -->
+    <div style="margin-bottom: 25px; background: #f8f9fa; border-radius: 12px; padding: 20px;">
+        <h2 style="font-size: 18px; font-weight: bold; color: #2a2a5a; margin: 0 0 15px 0; padding-bottom: 10px; border-bottom: 2px solid #e0e0e0;">Общая информация</h2>
+        <div style="display: grid; grid-template-columns: 1fr; gap: 10px;">
+            ${data.model ? `<div style="display: flex; justify-content: space-between; padding: 8px 0; border-bottom: 1px solid #eee;">
+                <span style="color: #666;">Комплектация:</span>
+                <span style="font-weight: 600;">${data.brand || ''} ${data.model || ''}</span>
+            </div>` : ''}
+            <div style="display: flex; justify-content: space-between; padding: 8px 0; border-bottom: 1px solid #eee;">
+                <span style="color: #666;">VIN:</span>
+                <span style="font-weight: 600;">${data.vin || '—'}</span>
+            </div>
+            ${data.vehicleInfo?.vehicleType ? `<div style="display: flex; justify-content: space-between; padding: 8px 0; border-bottom: 1px solid #eee;">
+                <span style="color: #666;">Тип ТС:</span>
+                <span style="font-weight: 600;">${data.vehicleInfo.vehicleType}</span>
+            </div>` : ''}
+            ${data.vehicleInfo?.production ? `<div style="display: flex; justify-content: space-between; padding: 8px 0; border-bottom: 1px solid #eee;">
+                <span style="color: #666;">Происхождение:</span>
+                <span style="font-weight: 600;">${data.vehicleInfo.production}</span>
+            </div>` : ''}
+            ${data.ownerInfo?.usage ? `<div style="display: flex; justify-content: space-between; padding: 8px 0; border-bottom: 1px solid #eee;">
+                <span style="color: #666;">Тип использования:</span>
+                <span style="font-weight: 600;">${data.ownerInfo.usage}</span>
+            </div>` : ''}
+            ${data.ownerInfo?.ownersCount ? `<div style="display: flex; justify-content: space-between; padding: 8px 0; border-bottom: 1px solid #eee;">
+                <span style="color: #666;">Количество владельцев:</span>
+                <span style="font-weight: 600;">${data.ownerInfo.ownersCount}</span>
+            </div>` : ''}
+            ${data.ownerInfo?.registrationTime ? `<div style="display: flex; justify-content: space-between; padding: 8px 0; border-bottom: 1px solid #eee;">
+                <span style="color: #666;">Срок с первой регистрации:</span>
+                <span style="font-weight: 600;">${data.ownerInfo.registrationTime}</span>
+            </div>` : ''}
+            ${data.ownerInfo?.newEnergy !== undefined ? `<div style="display: flex; justify-content: space-between; padding: 8px 0;">
+                <span style="color: #666;">Новый энергетический транспорт:</span>
+                <span style="font-weight: 600;">${data.ownerInfo.newEnergy || 'нет'}</span>
+            </div>` : ''}
         </div>
     </div>
-
-    ${/* Вставляем детализованный блок страховых случаев из полного отчёта */ ''}
-    ${generateInsuranceBlock(data)}
-
-    ${data.conclusion ? `
-    <div style="margin-top: 16px; margin-bottom: 10px; background: linear-gradient(135deg, #e8f5e9, #c8e6c9); border-radius: 12px; padding: 14px;">
-        <h2 style="font-size: 16px; font-weight: bold; color: #2a2a5a; margin: 0 0 8px 0;">Заключение</h2>
-        <p style="margin: 5px 0;"><strong>Аварии:</strong> ${data.conclusion.accidents || '—'}</p>
-        <p style="margin: 5px 0;"><strong>Рекомендация:</strong> ${data.conclusion.recommendation || '—'}</p>
+    
+    <!-- 2. Проверка на серьёзные риски -->
+    <div style="margin-bottom: 25px; background: #f8f9fa; border-radius: 12px; padding: 20px;">
+        <h2 style="font-size: 18px; font-weight: bold; color: #2a2a5a; margin: 0 0 15px 0; padding-bottom: 10px; border-bottom: 2px solid #e0e0e0;">Проверка на серьёзные риски</h2>
+        <div style="display: grid; grid-template-columns: 1fr; gap: 10px;">
+            ${generateRiskCheckRow('Структурные повреждения', data.frameCheck?.bodyFrame || data.conclusion?.bodyAnomalies)}
+            ${generateRiskCheckRow('Срабатывание подушек безопасности', data.components?.airbags?.status === 'problem' ? 'Обнаружено' : 'не обнаружено')}
+            ${generateRiskCheckRow('Повреждения двигателя', data.bodyRepairMap?.engineTransmission && data.bodyRepairMap.engineTransmission !== 'без аномалий' ? 'Обнаружено' : 'не обнаружено')}
+            ${generateRiskCheckRow('Пожар', data.safetyChecks?.fire === 5.0 || data.safetyChecks?.fire === '5.0' ? 'не обнаружено' : 'Обнаружено')}
+            ${generateRiskCheckRow('Затопление', data.safetyChecks?.flood === 5.0 || data.safetyChecks?.flood === '5.0' ? 'не обнаружено' : 'Обнаружено')}
+            ${generateRiskCheckRow('Кража', 'не обнаружено')}
+            ${generateRiskCheckRow('Эксплуатационные ограничения', 'не обнаружено')}
+            ${generateRiskCheckRow('Крупный ущерб', data.conclusion?.accidents === 'Не зафиксировано' ? 'не обнаружено' : data.conclusion?.accidents || 'не обнаружено')}
+            ${generateRiskCheckRow('Риск-предупреждения', data.insuranceInfo?.risks && data.insuranceInfo.risks !== 'Нет особых рекомендаций' ? data.insuranceInfo.risks : 'не обнаружено')}
+        </div>
+    </div>
+    
+    <!-- 3. Отзывные кампании -->
+    <div style="margin-bottom: 25px; background: #f8f9fa; border-radius: 12px; padding: 20px;">
+        <h2 style="font-size: 18px; font-weight: bold; color: #2a2a5a; margin: 0 0 15px 0; padding-bottom: 10px; border-bottom: 2px solid #e0e0e0;">Отзывные кампании</h2>
+        ${data.recallRecords && data.recallRecords.length > 0 ? `
+            ${data.recallRecords.map((recall, index) => `
+                <div style="background: #fff3cd; border-radius: 8px; padding: 15px; margin-bottom: 15px; border-left: 4px solid #ffc107;">
+                    <h4 style="color: #856404; margin: 0 0 10px 0;">Отзыв #${index + 1} — ${recall.area || 'Не указана область'}</h4>
+                    <p style="margin: 5px 0;"><strong>Период:</strong> ${recall.period || '—'}</p>
+                    <p style="margin: 5px 0;"><strong>Описание дефекта:</strong> ${recall.defectDescription || '—'}</p>
+                    <p style="margin: 5px 0;"><strong>Возможные последствия:</strong> ${recall.possibleConsequences || '—'}</p>
+                    <p style="margin: 5px 0;"><strong>Способ устранения:</strong> ${recall.remedyMethod || '—'}</p>
+                    <p style="margin: 5px 0;"><strong>Статус:</strong> <span style="color: ${recall.status === 'Устранено' ? '#28a745' : '#dc3545'};">${recall.status || '—'}</span></p>
+                </div>
+            `).join('')}
+        ` : `
+            <div style="display: flex; justify-content: space-between; padding: 8px 0;">
+                <span style="color: #666;">Отзывные кампании:</span>
+                <span style="font-weight: 600; color: #28a745;">не обнаружено</span>
+            </div>
+        `}
+    </div>
+    
+    <!-- 4. Ремонт и повреждения (история страховых случаев) - ДЕТАЛЬНЫЙ БЛОК -->
+    <div style="margin-bottom: 25px; background: #f8f9fa; border-radius: 12px; padding: 20px;">
+        <h2 style="font-size: 18px; font-weight: bold; color: #2a2a5a; margin: 0 0 15px 0; padding-bottom: 10px; border-bottom: 2px solid #e0e0e0;">Ремонт и повреждения (история страховых случаев)</h2>
+        
+        <div style="background: white; padding: 15px; border-radius: 8px; margin-bottom: 20px;">
+            <div style="display: flex; justify-content: space-between; align-items: center;">
+                <span style="color: #666; font-size: 14px;">Количество завершённых страховых случаев:</span>
+                <span style="font-size: 24px; font-weight: bold; color: ${data.insuranceHistory && data.insuranceHistory.length > 0 ? '#dc3545' : '#28a745'};">
+                    ${data.insuranceHistory ? data.insuranceHistory.length : 0}
+                </span>
+            </div>
+        </div>
+        
+        ${data.insuranceHistory && data.insuranceHistory.length > 0 ? `
+            ${data.insuranceHistory.map((incident, index) => `
+                <div style="background: #fff3cd; border-radius: 12px; padding: 20px; margin-bottom: 20px; border-left: 5px solid #ffc107;">
+                    <h3 style="font-size: 16px; font-weight: bold; color: #856404; margin: 0 0 15px 0;">
+                        ${getEmojiNumber(index + 1)} ${incident.date || 'Дата не указана'}
+                    </h3>
+                    
+                    <div style="display: grid; grid-template-columns: 1fr; gap: 8px; margin-bottom: 15px;">
+                        <div style="display: flex; justify-content: space-between; padding: 8px; background: white; border-radius: 6px;">
+                            <span style="color: #666;">Тип:</span>
+                            <span style="font-weight: 600;">${incident.type || 'дорожно-транспортное происшествие'}</span>
+                        </div>
+                        <div style="display: flex; justify-content: space-between; padding: 8px; background: white; border-radius: 6px;">
+                            <span style="color: #666;">Статус:</span>
+                            <span style="font-weight: 600; color: ${incident.status === 'Закрыто' ? '#28a745' : '#ffc107'};">${incident.status || 'закрыт'}</span>
+                        </div>
+                        <div style="display: flex; justify-content: space-between; padding: 8px; background: white; border-radius: 6px;">
+                            <span style="color: #666;">Сумма ущерба:</span>
+                            <span style="font-weight: 600; color: #dc3545;">≈ ${incident.damageAmount || '—'}</span>
+                        </div>
+                    </div>
+                    
+                    ${incident.works && incident.works.length > 0 ? `
+                        <div style="background: white; padding: 15px; border-radius: 8px;">
+                            <h4 style="font-size: 14px; font-weight: bold; color: #333; margin: 0 0 12px 0;">Зафиксированные работы:</h4>
+                            <div style="display: grid; grid-template-columns: 1fr; gap: 6px;">
+                                ${incident.works.map(work => `
+                                    <div style="display: flex; justify-content: space-between; align-items: center; padding: 8px 12px; background: #f8f9fa; border-radius: 6px; border-left: 3px solid ${work.action === 'замена' ? '#ffc107' : '#28a745'};">
+                                        <span style="color: #333;">${work.part}</span>
+                                        <span style="font-size: 12px; padding: 3px 10px; border-radius: 4px; font-weight: 600; 
+                                            background: ${work.action === 'замена' ? '#fff3cd' : '#d4edda'}; 
+                                            color: ${work.action === 'замена' ? '#856404' : '#155724'};">
+                                            ${work.action} (${work.quantity || 1})
+                                        </span>
+                                    </div>
+                                `).join('')}
+                            </div>
+                        </div>
+                    ` : ''}
+                </div>
+            `).join('')}
+        ` : `
+            <div style="text-align: center; padding: 30px; color: #28a745;">
+                <i class="fas fa-check-circle" style="font-size: 48px; margin-bottom: 15px;"></i>
+                <p style="font-size: 16px; font-weight: 600;">Страховых случаев не зафиксировано</p>
+            </div>
+        `}
+    </div>
+    
+    <!-- 5. Проверка кузова и силовой структуры -->
+    <div style="margin-bottom: 25px; background: #f8f9fa; border-radius: 12px; padding: 20px;">
+        <h2 style="font-size: 18px; font-weight: bold; color: #2a2a5a; margin: 0 0 15px 0; padding-bottom: 10px; border-bottom: 2px solid #e0e0e0;">Проверка кузова и силовой структуры</h2>
+        <div style="display: grid; grid-template-columns: 1fr; gap: 10px;">
+            <div style="display: flex; justify-content: space-between; padding: 8px 0; border-bottom: 1px solid #eee;">
+                <span style="color: #666;">Аномалии каркаса кузова:</span>
+                <span style="font-weight: 600; color: ${!data.frameCheck?.bodyFrame || data.frameCheck?.bodyFrame.includes('Не обнаружено') ? '#28a745' : '#dc3545'};">
+                    ${data.frameCheck?.bodyFrame || 'не обнаружено'}
+                </span>
+            </div>
+            <div style="display: flex; justify-content: space-between; padding: 8px 0;">
+                <span style="color: #666;">Аномалии усиленных элементов:</span>
+                <span style="font-weight: 600; color: ${!data.frameCheck?.reinforcedElements || data.frameCheck?.reinforcedElements.includes('Не обнаружено') ? '#28a745' : '#dc3545'};">
+                    ${data.frameCheck?.reinforcedElements || 'не обнаружено'}
+                </span>
+            </div>
+        </div>
+    </div>
+    
+    <!-- 6. Технические характеристики -->
+    ${data.vehicleInfo ? `
+    <div style="margin-bottom: 25px; background: #f8f9fa; border-radius: 12px; padding: 20px;">
+        <h2 style="font-size: 18px; font-weight: bold; color: #2a2a5a; margin: 0 0 15px 0; padding-bottom: 10px; border-bottom: 2px solid #e0e0e0;">Технические характеристики</h2>
+        <div style="display: grid; grid-template-columns: 1fr; gap: 10px;">
+            ${data.fuelType || data.vehicleInfo.fuelType ? `<div style="display: flex; justify-content: space-between; padding: 8px 0; border-bottom: 1px solid #eee;">
+                <span style="color: #666;">Тип топлива:</span>
+                <span style="font-weight: 600;">${data.fuelType || data.vehicleInfo.fuelType}</span>
+            </div>` : ''}
+            ${data.vehicleInfo.engineVolume ? `<div style="display: flex; justify-content: space-between; padding: 8px 0; border-bottom: 1px solid #eee;">
+                <span style="color: #666;">Объём двигателя:</span>
+                <span style="font-weight: 600;">${formatWithUnit(data.vehicleInfo.engineVolume, 'см³')}</span>
+            </div>` : ''}
+            ${data.vehicleInfo.power ? `<div style="display: flex; justify-content: space-between; padding: 8px 0; border-bottom: 1px solid #eee;">
+                <span style="color: #666;">Мощность:</span>
+                <span style="font-weight: 600;">${formatWithUnit(data.vehicleInfo.power, 'кВт')}</span>
+            </div>` : ''}
+            ${data.vehicleInfo.transmission ? `<div style="display: flex; justify-content: space-between; padding: 8px 0; border-bottom: 1px solid #eee;">
+                <span style="color: #666;">Коробка передач:</span>
+                <span style="font-weight: 600;">${data.vehicleInfo.transmission}</span>
+            </div>` : ''}
+            ${data.vehicleInfo.weight ? `<div style="display: flex; justify-content: space-between; padding: 8px 0; border-bottom: 1px solid #eee;">
+                <span style="color: #666;">Снаряжённая масса:</span>
+                <span style="font-weight: 600;">${formatWithUnit(data.vehicleInfo.weight, 'кг')}</span>
+            </div>` : ''}
+            ${data.vehicleInfo.dimensions ? `<div style="display: flex; justify-content: space-between; padding: 8px 0;">
+                <span style="color: #666;">Габариты (Д×Ш×В):</span>
+                <span style="font-weight: 600;">${data.vehicleInfo.dimensions.length || '—'} × ${data.vehicleInfo.dimensions.width || '—'} × ${data.vehicleInfo.dimensions.height || '—'}</span>
+            </div>` : ''}
+        </div>
     </div>
     ` : ''}
-
-    <div style="text-align: center; color: #999; font-size: 11px; margin-top: 18px; padding-top: 12px; border-top: 1px solid #e0e0e0;">
-        Отчёт сгенерирован ${new Date().toLocaleDateString('ru-RU')} ${new Date().toLocaleTimeString('ru-RU')}
+    
+    <!-- 7. Страхование -->
+    ${data.insuranceInfo ? `
+    <div style="margin-bottom: 25px; background: #f8f9fa; border-radius: 12px; padding: 20px;">
+        <h2 style="font-size: 18px; font-weight: bold; color: #2a2a5a; margin: 0 0 15px 0; padding-bottom: 10px; border-bottom: 2px solid #e0e0e0;">Страхование</h2>
+        <div style="display: grid; grid-template-columns: 1fr; gap: 10px;">
+            <div style="display: flex; justify-content: space-between; padding: 8px 0; border-bottom: 1px solid #eee;">
+                <span style="color: #666;">ОСАГО:</span>
+                <span style="font-weight: 600; color: ${data.insuranceInfo.osago === 'Действует' ? '#28a745' : '#dc3545'};">
+                    ${data.insuranceInfo.osago || '—'}${data.insuranceInfo.osagoRenewedContinuously ? ', продлевалось' : ', не продлевалось'}
+                </span>
+            </div>
+            <div style="display: flex; justify-content: space-between; padding: 8px 0;">
+                <span style="color: #666;">КАСКО:</span>
+                <span style="font-weight: 600; color: ${data.insuranceInfo.kasko === 'Действует' ? '#28a745' : '#dc3545'};">
+                    ${data.insuranceInfo.kasko || '—'}${data.insuranceInfo.kaskoRenewedContinuously ? ', продлевалось' : ', не продлевалось'}
+                </span>
+            </div>
+        </div>
+    </div>
+    ` : ''}
+    
+    <!-- 8. Пробег -->
+    <div style="margin-bottom: 25px; background: #f8f9fa; border-radius: 12px; padding: 20px;">
+        <h2 style="font-size: 18px; font-weight: bold; color: #2a2a5a; margin: 0 0 15px 0; padding-bottom: 10px; border-bottom: 2px solid #e0e0e0;">Информация о пробеге</h2>
+        <div style="display: grid; grid-template-columns: repeat(2, 1fr); gap: 15px;">
+            <div style="background: white; padding: 15px; border-radius: 8px; text-align: center;">
+                <span style="font-size: 11px; color: #888; text-transform: uppercase; display: block; margin-bottom: 5px;">Последний зафиксированный</span>
+                <p style="font-size: 20px; font-weight: bold; color: #333; margin: 0;">${data.lastMileage || '—'}</p>
+                ${data.lastMileageDate ? `<span style="font-size: 12px; color: #666;">(${data.lastMileageDate})</span>` : ''}
+            </div>
+            <div style="background: white; padding: 15px; border-radius: 8px; text-align: center;">
+                <span style="font-size: 11px; color: #888; text-transform: uppercase; display: block; margin-bottom: 5px;">Прогнозируемый текущий</span>
+                <p style="font-size: 20px; font-weight: bold; color: #333; margin: 0;">${data.estimatedCurrentMileage || data.mileageSummary?.estimatedCurrent || '—'}</p>
+            </div>
+            <div style="background: white; padding: 15px; border-radius: 8px; text-align: center;">
+                <span style="font-size: 11px; color: #888; text-transform: uppercase; display: block; margin-bottom: 5px;">Среднегодовой</span>
+                <p style="font-size: 20px; font-weight: bold; color: #333; margin: 0;">${data.avgYearlyMileage || data.mileageSummary?.avgYearly || '—'}</p>
+            </div>
+            <div style="background: white; padding: 15px; border-radius: 8px; text-align: center;">
+                <span style="font-size: 11px; color: #888; text-transform: uppercase; display: block; margin-bottom: 5px;">Оценка пробега</span>
+                <p style="font-size: 20px; font-weight: bold; color: ${data.mileageAssessment === 'очень маленький' || data.mileageAssessment === 'нормальный' ? '#28a745' : '#ffc107'}; margin: 0;">${data.mileageAssessment || '—'}</p>
+            </div>
+        </div>
+        ${data.mileageAnomalies ? `
+        <div style="margin-top: 15px; padding: 12px; background: ${data.mileageAnomalies === 'Не обнаружено' ? '#d4edda' : '#f8d7da'}; border-radius: 8px; text-align: center;">
+            <strong>Аномалии пробега:</strong> 
+            <span style="color: ${data.mileageAnomalies === 'Не обнаружено' ? '#28a745' : '#dc3545'};">${data.mileageAnomalies}</span>
+        </div>
+        ` : ''}
+    </div>
+    
+    <!-- Футер -->
+    <div style="text-align: center; color: #999; font-size: 11px; margin-top: 30px; padding-top: 20px; border-top: 1px solid #e0e0e0;">
+        Отчёт сгенерирован ${new Date().toLocaleDateString('ru-RU')} в ${new Date().toLocaleTimeString('ru-RU')}
     </div>
 </div>
 `;
 }
+
+// Вспомогательная функция для генерации строки проверки риска
+function generateRiskCheckRow(label, value) {
+    const isOk = !value || value === 'не обнаружено' || value === 'Не обнаружено' || 
+                 value === 'Нет' || value === 'Не зафиксировано' || 
+                 value.includes('Не обнаружено') || value.includes('без аномалий');
+    
+    return `
+        <div style="display: flex; justify-content: space-between; padding: 8px 0; border-bottom: 1px solid #eee;">
+            <span style="color: #666;">${label}:</span>
+            <span style="font-weight: 600; color: ${isOk ? '#28a745' : '#dc3545'};">
+                ${isOk ? 'не обнаружено' : value}
+            </span>
+        </div>
+    `;
+}
+
+// Вспомогательная функция для эмодзи-номеров
+function getEmojiNumber(num) {
+    const emojis = ['0️⃣', '1️⃣', '2️⃣', '3️⃣', '4️⃣', '5️⃣', '6️⃣', '7️⃣', '8️⃣', '9️⃣', '🔟'];
+    return num <= 10 ? emojis[num] : `#${num}`;
+}
+
 // Генерация блока отзывных кампаний производителя
 function generateRecallBlock(data) {
     // Если нет данных об отзывах — не показываем блок вообще
