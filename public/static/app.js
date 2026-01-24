@@ -2291,27 +2291,28 @@ ${tariff === 'full' && data.frameCheck ? `
 ` : ''}
 
 <!-- 2.7. Детальная проверка силовой структуры кузова (только для полного отчета) -->
-${tariff === 'full' && data.structuralElements ? `
+${tariff === 'full' && data.structuralElements && hasStructuralProblems(data.structuralElements) ? `
 <div style="margin-bottom: 25px; background: #f8f9fa; border-radius: 12px; padding: 20px;">
     <h2 style="font-size: 18px; font-weight: bold; color: #2a2a5a; margin: 0 0 15px 0; padding-bottom: 10px; border-bottom: 2px solid #e0e0e0;">Проверка ДТП и силовой структуры</h2>
-    <h3 style="font-size: 14px; color: #666; margin-bottom: 10px;">Проверенные элементы</h3>
+    <h3 style="font-size: 14px; color: #666; margin-bottom: 10px;">Проверенные элементы с замечаниями</h3>
     
     <div style="display: grid; grid-template-columns: repeat(3, 1fr); gap: 10px;">
-        ${generateStructuralElement('Стойка A', data.structuralElements.pillarA)}
-        ${generateStructuralElement('Стойка B', data.structuralElements.pillarB)}
-        ${generateStructuralElement('Стойка C', data.structuralElements.pillarC)}
-        ${generateStructuralElement('Передний лонжерон', data.structuralElements.frontLongeron)}
-        ${generateStructuralElement('Задний лонжерон', data.structuralElements.rearLongeron)}
-        ${generateStructuralElement('Передняя панель', data.structuralElements.frontPanel)}
-        ${generateStructuralElement('Задняя панель', data.structuralElements.rearPanel)}
-        ${generateStructuralElement('Противопожарная перегородка', data.structuralElements.firewall)}
-        ${generateStructuralElement('Крепления амортизаторов', data.structuralElements.shockMounts)}
-        ${generateStructuralElement('Днище автомобиля', data.structuralElements.floor)}
-        ${generateStructuralElement('Левая боковина', data.structuralElements.leftSide)}
-        ${generateStructuralElement('Правая боковина', data.structuralElements.rightSide)}
+        ${generateStructuralElementIfProblem('Стойка A', data.structuralElements.pillarA)}
+        ${generateStructuralElementIfProblem('Стойка B', data.structuralElements.pillarB)}
+        ${generateStructuralElementIfProblem('Стойка C', data.structuralElements.pillarC)}
+        ${generateStructuralElementIfProblem('Передний лонжерон', data.structuralElements.frontLongeron)}
+        ${generateStructuralElementIfProblem('Задний лонжерон', data.structuralElements.rearLongeron)}
+        ${generateStructuralElementIfProblem('Передняя панель', data.structuralElements.frontPanel)}
+        ${generateStructuralElementIfProblem('Задняя панель', data.structuralElements.rearPanel)}
+        ${generateStructuralElementIfProblem('Противопожарная перегородка', data.structuralElements.firewall)}
+        ${generateStructuralElementIfProblem('Крепления амортизаторов', data.structuralElements.shockMounts)}
+        ${generateStructuralElementIfProblem('Днище автомобиля', data.structuralElements.floor)}
+        ${generateStructuralElementIfProblem('Левая боковина', data.structuralElements.leftSide)}
+        ${generateStructuralElementIfProblem('Правая боковина', data.structuralElements.rightSide)}
     </div>
 </div>
 ` : ''}
+
 
 <!-- 2.8. Кузов и внешний вид (только для полного отчета) -->
 ${tariff === 'full' && data.bodyParts ? `
@@ -2747,17 +2748,77 @@ function generateStructuralElement(name, element) {
 
 function generateBodyPartElement(name, part) {
     if (!part) return '';
-    const isOk = !part || part.status === 'ok' || !part.status;
+    const status = part.status || 'no_data';
+    const isOk = status === 'ok';
+    const isNoData = status === 'no_data';
+    const isProblem = status === 'problem';
+    
+    let statusText, bgColor, borderColor, textColor;
+    
+    if (isNoData) {
+        statusText = 'Без замечаний';
+        bgColor = '#ffffff';
+        borderColor = '#d4edda';
+        textColor = '#28a745';
+    } else if (isOk) {
+        statusText = 'Без замечаний';
+        bgColor = '#ffffff';
+        borderColor = '#d4edda';
+        textColor = '#28a745';
+    } else {
+        statusText = 'Обнаружены отметки';
+        bgColor = '#fff3cd';
+        borderColor = '#ffc107';
+        textColor = '#856404';
+    }
+    
     return `
-    <div style="background: ${isOk ? '#ffffff' : '#fff3cd'}; border: 2px solid ${isOk ? '#d4edda' : '#ffc107'}; border-radius: 8px; padding: 10px; text-align: center; font-size: 11px;">
-        <div style="font-weight: bold; margin-bottom: 5px; color: ${isOk ? '#28a745' : '#856404'};">
-            ${isOk ? 'Без отклонений' : 'Обнаружены отметки'}
+    <div style="background: ${bgColor}; border: 2px solid ${borderColor}; border-radius: 8px; padding: 10px; text-align: center; font-size: 11px;">
+        <div style="font-weight: bold; margin-bottom: 5px; color: ${textColor};">
+            ${statusText}
         </div>
         <div style="color: #333; font-size: 10px;">${name}</div>
-        ${part.note ? `<div style="color: #666; font-size: 9px; margin-top: 3px;">${part.note}</div>` : ''}
+        ${part.note && isProblem ? `<div style="color: #666; font-size: 9px; margin-top: 3px;">${part.note}</div>` : ''}
     </div>
     `;
 }
+
+// Проверка наличия проблем в силовой структуре
+function hasStructuralProblems(structuralElements) {
+    if (!structuralElements) return false;
+    
+    const elements = [
+        structuralElements.pillarA,
+        structuralElements.pillarB,
+        structuralElements.pillarC,
+        structuralElements.frontLongeron,
+        structuralElements.rearLongeron,
+        structuralElements.frontPanel,
+        structuralElements.rearPanel,
+        structuralElements.firewall,
+        structuralElements.shockMounts,
+        structuralElements.floor,
+        structuralElements.leftSide,
+        structuralElements.rightSide
+    ];
+    
+    return elements.some(el => el && el.status === 'problem');
+}
+
+// Генерация элемента силовой структуры только если есть проблема
+function generateStructuralElementIfProblem(name, element) {
+    if (!element || element.status !== 'problem') return '';
+    
+    return `
+    <div style="background: #f8d7da; border-radius: 8px; padding: 10px; text-align: center; font-size: 11px;">
+        <div style="font-weight: bold; margin-bottom: 5px; color: #dc3545;">
+            ✗ ${name}
+        </div>
+        ${element.note ? `<div style="color: #666; font-size: 10px;">${element.note}</div>` : ''}
+    </div>
+    `;
+}
+
 
 function generateComponentHTML(name, component) {
     const isOk = !component || component.status === 'ok' || !component.status;
