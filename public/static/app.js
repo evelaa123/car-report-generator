@@ -1,15 +1,453 @@
 // ============================================
 // Генератор Отчётов Авто - Главный JavaScript
-// Версия 2.1 - С поддержкой Gemini, PDF, Google Docs
-// Улучшенное логирование и обработка ошибок
+// Версия 3.0 - IndexedDB хранилище
 // ============================================
+
+// ============================================
+// Система хранения данных (IndexedDB с fallback на localStorage)
+// ============================================
+
+const Storage = {
+    dbName: 'CarReportsDB',
+    dbVersion: 1,
+    db: null,
+    isIndexedDBAvailable: false,
+
+    async init() {
+        try {
+            this.db = await this._openDB();
+            this.isIndexedDBAvailable = true;
+            Logger.success('Storage', 'IndexedDB инициализирован');
+        } catch (error) {
+            Logger.warn('Storage', 'IndexedDB недоступен, используем localStorage', { error: error.message });
+            this.isIndexedDBAvailable = false;
+        }
+    },
+
+    _openDB() {
+        return new Promise((resolve, reject) => {
+            if (!window.indexedDB) {
+                reject(new Error('IndexedDB не поддерживается'));
+                return;
+            }
+
+            const request = indexedDB.open(this.dbName, this.dbVersion);
+
+            request.onerror = () => reject(request.error);
+            request.onsuccess = () => resolve(request.result);
+
+            request.onupgradeneeded = (event) => {
+                const db = event.target.result;
+                
+                if (!db.objectStoreNames.contains('reports')) {
+                    const reportsStore = db.createObjectStore('reports', { keyPath: 'id' });
+                    reportsStore.createIndex('vin', 'vin', { unique: false });
+                    reportsStore.createIndex('createdAt', 'createdAt', { unique: false });
+                }
+                
+                if (!db.objectStoreNames.contains('settings')) {
+                    db.createObjectStore('settings', { keyPath: 'key' });
+                }
+                
+                if (!db.objectStoreNames.contains('cars')) {
+                    db.createObjectStore('cars', { keyPath: 'vin' });
+                }
+
+                Logger.info('Storage', 'Структура IndexedDB создана');
+            };
+        });
+    },
+
+    // === Методы для отчётов ===
+
+    async saveReport(report) {
+        if (this.isIndexedDBAvailable) {
+            return this._idbPut('reports', this._prepareReportForStorage(report));
+        } else {
+            return this._localStorageSaveReport(report);
+        }
+    },
+
+    async saveReports(reports) {
+        if (this.isIndexedDBAvailable) {
+            const tx = this.db.transaction('reports', 'readwrite');
+            const store = tx.objectStore('reports');
+            
+            for (const report of reports) {
+                store.put(this._prepareReportForStorage(report));
+            }
+            
+            return new Promise((resolve, reject) => {
+                tx.oncomplete = () => resolve(true);
+                tx.onerror = () => reject(tx.error);
+            });
+        } else {
+            return this._localStorageSaveAllReports(reports);
+        }
+    },
+
+    async getAllReports() {
+        if (this.isIndexedDBAvailable) {
+            const reports = await this._idbGetAll('reports');
+            return reports.sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt));
+        } else {
+            return this._localStorageGetAllReports();
+        }
+    },
+
+    async getReport(id) {
+        if (this.isIndexedDBAvailable) {
+            return this._idbGet('reports', id);
+        } else {
+            const reports = await this._localStorageGetAllReports();
+            return reports.find(r => r.id === id);
+        }
+    },
+
+    async getReportsByVIN(vin) {
+        if (this.isIndexedDBAvailable) {
+            return new Promise((resolve, reject) => {
+                const tx = this.db.transaction('reports', 'readonly');
+                const store = tx.objectStore('reports');
+                const index = store.index('vin');
+                const request = index.getAll(vin);
+                
+                request.onsuccess = () => resolve(request.result || []);
+                request.onerror = () => reject(request.error);
+            });
+        } else {
+            const reports = await this._localStorageGetAllReports();
+            return reports.filter(r => r.vin === vin);
+        }
+    },
+
+    async deleteReport(id) {
+        if (this.isIndexedDBAvailable) {
+            return this._idbDelete('reports', id);
+        } else {
+            return this._localStorageDeleteReport(id);
+        }
+    },
+
+    async deleteReports(ids) {
+        if (this.isIndexedDBAvailable) {
+            const tx = this.db.transaction('reports', 'readwrite');
+            const store = tx.objectStore('reports');
+            
+            for (const id of ids) {
+                store.delete(id);
+            }
+            
+            return new Promise((resolve, reject) => {
+                tx.oncomplete = () => resolve(true);
+                tx.onerror = () => reject(tx.error);
+            });
+        } else {
+            for (const id of ids) {
+                await this._localStorageDeleteReport(id);
+            }
+            return true;
+        }
+    },
+
+    // === Методы для настроек ===
+
+    async saveSettings(settings) {
+        if (this.isIndexedDBAvailable) {
+            return this._idbPut('settings', { key: 'appSettings', ...settings });
+        } else {
+            localStorage.setItem('carReportsSettings', JSON.stringify(settings));
+            return true;
+        }
+    },
+
+    async getSettings() {
+        if (this.isIndexedDBAvailable) {
+            const result = await this._idbGet('settings', 'appSettings');
+            if (result) {
+                const { key, ...settings } = result;
+                return settings;
+            }
+            return null;
+        } else {
+            const data = localStorage.getItem('carReportsSettings');
+            return data ? JSON.parse(data) : null;
+        }
+    },
+
+    // === Методы для автомобилей ===
+
+    async saveCars(cars) {
+        if (this.isIndexedDBAvailable) {
+            const tx = this.db.transaction('cars', 'readwrite');
+            const store = tx.objectStore('cars');
+            
+            for (const [vin, carData] of Object.entries(cars)) {
+                store.put({ vin, ...carData });
+            }
+            
+            return new Promise((resolve, reject) => {
+                tx.oncomplete = () => resolve(true);
+                tx.onerror = () => reject(tx.error);
+            });
+        } else {
+            return true;
+        }
+    },
+
+    async getCars() {
+        if (this.isIndexedDBAvailable) {
+            const carsArray = await this._idbGetAll('cars');
+            const cars = {};
+            for (const car of carsArray) {
+                const { vin, ...carData } = car;
+                cars[vin] = carData;
+            }
+            return cars;
+        } else {
+            const data = localStorage.getItem('carReportsData');
+            if (data) {
+                const parsed = JSON.parse(data);
+                return parsed.cars || {};
+            }
+            return {};
+        }
+    },
+
+    // === Вспомогательные методы IndexedDB ===
+
+    _idbPut(storeName, data) {
+        return new Promise((resolve, reject) => {
+            const tx = this.db.transaction(storeName, 'readwrite');
+            const store = tx.objectStore(storeName);
+            const request = store.put(data);
+            
+            request.onsuccess = () => resolve(true);
+            request.onerror = () => reject(request.error);
+        });
+    },
+
+    _idbGet(storeName, key) {
+        return new Promise((resolve, reject) => {
+            const tx = this.db.transaction(storeName, 'readonly');
+            const store = tx.objectStore(storeName);
+            const request = store.get(key);
+            
+            request.onsuccess = () => resolve(request.result);
+            request.onerror = () => reject(request.error);
+        });
+    },
+
+    _idbGetAll(storeName) {
+        return new Promise((resolve, reject) => {
+            const tx = this.db.transaction(storeName, 'readonly');
+            const store = tx.objectStore(storeName);
+            const request = store.getAll();
+            
+            request.onsuccess = () => resolve(request.result || []);
+            request.onerror = () => reject(request.error);
+        });
+    },
+
+    _idbDelete(storeName, key) {
+        return new Promise((resolve, reject) => {
+            const tx = this.db.transaction(storeName, 'readwrite');
+            const store = tx.objectStore(storeName);
+            const request = store.delete(key);
+            
+            request.onsuccess = () => resolve(true);
+            request.onerror = () => reject(request.error);
+        });
+    },
+
+    // Подготовка отчёта для хранения (убираем pdfBase64 - он генерируется заново при необходимости)
+    _prepareReportForStorage(report) {
+        const { pdfBase64, ...reportToSave } = report;
+        return reportToSave;
+    },
+
+    // === Fallback методы для localStorage ===
+
+    _localStorageSaveReport(report) {
+        try {
+            const data = localStorage.getItem('carReportsData');
+            const parsed = data ? JSON.parse(data) : { reports: [], cars: {} };
+            
+            const preparedReport = this._prepareReportForStorage(report);
+            const existingIndex = parsed.reports.findIndex(r => r.id === report.id);
+            
+            if (existingIndex >= 0) {
+                parsed.reports[existingIndex] = preparedReport;
+            } else {
+                parsed.reports.unshift(preparedReport);
+            }
+            
+            localStorage.setItem('carReportsData', JSON.stringify(parsed));
+            return true;
+        } catch (error) {
+            this._handleLocalStorageError(error);
+            return false;
+        }
+    },
+
+    _localStorageSaveAllReports(reports) {
+        try {
+            const data = localStorage.getItem('carReportsData');
+            const parsed = data ? JSON.parse(data) : { reports: [], cars: {} };
+            
+            parsed.reports = reports.map(r => this._prepareReportForStorage(r));
+            
+            localStorage.setItem('carReportsData', JSON.stringify(parsed));
+            return true;
+        } catch (error) {
+            this._handleLocalStorageError(error);
+            return false;
+        }
+    },
+
+    _localStorageGetAllReports() {
+        try {
+            const data = localStorage.getItem('carReportsData');
+            if (data) {
+                const parsed = JSON.parse(data);
+                return parsed.reports || [];
+            }
+            return [];
+        } catch (error) {
+            Logger.error('Storage', 'Ошибка чтения localStorage', { error: error.message });
+            return [];
+        }
+    },
+
+    _localStorageDeleteReport(id) {
+        try {
+            const data = localStorage.getItem('carReportsData');
+            if (data) {
+                const parsed = JSON.parse(data);
+                parsed.reports = parsed.reports.filter(r => r.id !== id);
+                localStorage.setItem('carReportsData', JSON.stringify(parsed));
+            }
+            return true;
+        } catch (error) {
+            Logger.error('Storage', 'Ошибка удаления из localStorage', { error: error.message });
+            return false;
+        }
+    },
+
+    _handleLocalStorageError(error) {
+        if (error.name === 'QuotaExceededError' || error.message.includes('quota')) {
+            Logger.error('Storage', 'localStorage переполнен!');
+            showToast('Память браузера переполнена. Рекомендуется использовать другой браузер или очистить данные.', 'error');
+        } else {
+            Logger.error('Storage', 'Ошибка localStorage', { error: error.message });
+        }
+    },
+
+    // === Утилиты ===
+
+    async getStorageStats() {
+        const stats = {
+            type: this.isIndexedDBAvailable ? 'IndexedDB' : 'localStorage',
+            reportsCount: 0,
+            estimatedSize: '0 MB'
+        };
+
+        if (this.isIndexedDBAvailable) {
+            const reports = await this._idbGetAll('reports');
+            stats.reportsCount = reports.length;
+            
+            const jsonSize = JSON.stringify(reports).length;
+            stats.estimatedSize = ((jsonSize * 2) / (1024 * 1024)).toFixed(2) + ' MB';
+            
+            if (navigator.storage && navigator.storage.estimate) {
+                try {
+                    const estimate = await navigator.storage.estimate();
+                    stats.quota = (estimate.quota / (1024 * 1024)).toFixed(0) + ' MB';
+                    stats.usage = (estimate.usage / (1024 * 1024)).toFixed(2) + ' MB';
+                    stats.available = ((estimate.quota - estimate.usage) / (1024 * 1024)).toFixed(0) + ' MB';
+                } catch (e) {}
+            }
+        } else {
+            const data = localStorage.getItem('carReportsData');
+            if (data) {
+                const parsed = JSON.parse(data);
+                stats.reportsCount = parsed.reports?.length || 0;
+                stats.estimatedSize = ((data.length * 2) / (1024 * 1024)).toFixed(2) + ' MB';
+            }
+            stats.quota = '5-10 MB (localStorage limit)';
+        }
+
+        return stats;
+    },
+
+    async migrateFromLocalStorage() {
+        if (!this.isIndexedDBAvailable) {
+            Logger.warn('Storage', 'IndexedDB недоступен, миграция невозможна');
+            return false;
+        }
+
+        const oldData = localStorage.getItem('carReportsData');
+        if (!oldData) {
+            Logger.info('Storage', 'Нет данных для миграции');
+            return true;
+        }
+
+        try {
+            const parsed = JSON.parse(oldData);
+            
+            if (parsed.reports && parsed.reports.length > 0) {
+                Logger.info('Storage', `Миграция ${parsed.reports.length} отчётов...`);
+                await this.saveReports(parsed.reports);
+            }
+            
+            if (parsed.cars && Object.keys(parsed.cars).length > 0) {
+                await this.saveCars(parsed.cars);
+            }
+
+            localStorage.removeItem('carReportsData');
+            Logger.success('Storage', 'Миграция завершена успешно');
+            showToast('Данные перенесены в новое хранилище', 'success');
+            
+            return true;
+        } catch (error) {
+            Logger.error('Storage', 'Ошибка миграции', { error: error.message });
+            return false;
+        }
+    },
+
+    async exportAllData() {
+        const reports = await this.getAllReports();
+        const cars = await this.getCars();
+        const settings = await this.getSettings();
+        
+        return {
+            exportDate: new Date().toISOString(),
+            reports,
+            cars,
+            settings
+        };
+    },
+
+    async importData(data) {
+        if (data.reports) {
+            await this.saveReports(data.reports);
+        }
+        if (data.cars) {
+            await this.saveCars(data.cars);
+        }
+        if (data.settings) {
+            await this.saveSettings(data.settings);
+        }
+        return true;
+    }
+};
+
+window.Storage = Storage;
 
 // ============================================
 // Система логирования
 // ============================================
-// ============================================
-// Система логирования с отправкой в Vercel
-// ============================================
+
 const Logger = {
     logs: [],
     maxLogs: 500,
@@ -31,13 +469,11 @@ const Logger = {
             url: window.location.href
         };
         
-        // Локальное хранение
         this.logs.push(logEntry);
         if (this.logs.length > this.maxLogs) {
             this.logs.shift();
         }
         
-        // Вывод в консоль браузера
         const styles = {
             INFO: 'color: #2196F3',
             WARN: 'color: #FF9800; font-weight: bold',
@@ -53,7 +489,6 @@ const Logger = {
             console.log(`%c${prefix} ${message}`, styles[level] || '');
         }
         
-        // Отправка на сервер (для ERROR и WARN всегда, для остальных - в продакшене)
         if (level === 'ERROR' || level === 'WARN' || !window.location.hostname.includes('localhost')) {
             this._sendToServer(logEntry);
         }
@@ -61,11 +496,9 @@ const Logger = {
         return logEntry;
     },
     
-    // Отправка логов на сервер с очередью и батчингом
     _sendToServer(logEntry) {
         this.sendQueue.push(logEntry);
         
-        // Дебаунс - отправляем не чаще раза в секунду
         if (!this.sendTimeout) {
             this.sendTimeout = setTimeout(() => {
                 this._flushQueue();
@@ -82,16 +515,14 @@ const Logger = {
         this.sendQueue = [];
         
         try {
-            // Отправляем каждый лог (или можно батчить)
             for (const log of logsToSend) {
                 await fetch('/api/log', {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
                     body: JSON.stringify(log)
-                }).catch(() => {}); // Игнорируем ошибки отправки логов
+                }).catch(() => {});
             }
         } catch (e) {
-            // Тихо игнорируем ошибки логирования
         } finally {
             this.isSending = false;
         }
@@ -149,8 +580,6 @@ const Logger = {
     }
 };
 
-
-// Глобальный обработчик необработанных ошибок
 window.onerror = function(message, source, lineno, colno, error) {
     Logger.error('Global', `Необработанная ошибка: ${message}`, {
         source: source?.split('/').pop(),
@@ -158,10 +587,9 @@ window.onerror = function(message, source, lineno, colno, error) {
         col: colno,
         stack: error?.stack?.slice(0, 300)
     });
-    return false; // Не подавлять ошибку
+    return false;
 };
 
-// Глобальный обработчик необработанных Promise rejection
 window.addEventListener('unhandledrejection', function(event) {
     Logger.error('Promise', `Необработанный Promise rejection`, {
         reason: event.reason?.message || event.reason || 'Неизвестно',
@@ -169,10 +597,12 @@ window.addEventListener('unhandledrejection', function(event) {
     });
 });
 
-// Делаем Logger доступным глобально для отладки
 window.Logger = Logger;
 
-// Определяем режим работы (Electron или Web)
+// ============================================
+// Определение режима работы
+// ============================================
+
 const isElectron = typeof require !== 'undefined';
 
 let ipcRenderer = null;
@@ -180,7 +610,10 @@ if (isElectron) {
     ipcRenderer = require('electron').ipcRenderer;
 }
 
+// ============================================
 // Глобальное состояние приложения
+// ============================================
+
 const appState = {
     images: [],
     reports: [],
@@ -188,7 +621,7 @@ const appState = {
     settings: {
         openaiKey: '',
         geminiKey: '',
-        aiProvider: 'openai', // 'openai' или 'gemini'
+        aiProvider: 'openai',
         logoUrl: '',
         logoBase64: '',
         googleClientId: '',
@@ -200,9 +633,9 @@ const appState = {
 };
 
 // Константы
-const MAX_IMAGE_SIZE = 4000; // Максимальный размер стороны для API
-const MAX_IMAGE_BYTES = 4 * 1024 * 1024; // 4MB макс размер файла
-const CHUNK_HEIGHT = 3000; // Высота чанка для разбивки длинных изображений
+const MAX_IMAGE_SIZE = 4000;
+const MAX_IMAGE_BYTES = 4 * 1024 * 1024;
+const CHUNK_HEIGHT = 3000;
 
 // ============================================
 // Инициализация
@@ -211,6 +644,12 @@ const CHUNK_HEIGHT = 3000; // Высота чанка для разбивки д
 document.addEventListener('DOMContentLoaded', async () => {
     Logger.info('App', 'Инициализация приложения...', { isElectron });
     try {
+        // Инициализируем хранилище для веб-версии
+        if (!isElectron) {
+            await Storage.init();
+            await Storage.migrateFromLocalStorage();
+        }
+        
         await loadData();
         await loadSettings();
         updateUI();
@@ -220,19 +659,17 @@ document.addEventListener('DOMContentLoaded', async () => {
         Logger.error('App', 'Ошибка инициализации', { message: error.message, stack: error.stack?.slice(0, 200) });
     }
 });
+
 function sanitizeForFilename(str) {
-    // Заменяем недопустимые символы на подчёркивание
     return str.replace(/[<>:"/\\|?*]/g, '_');
 }
-// Инициализация Google Auth (для Electron OAuth)
+
 async function initGoogleAuth() {
     if (!isElectron) return;
     
-    // Проверяем авторизацию при запуске
     const isAuthorized = await ipcRenderer.invoke('check-google-auth');
     
     if (!isAuthorized) {
-        // Показываем уведомление
         showGoogleAuthPrompt();
     }
 }
@@ -271,7 +708,6 @@ async function authorizeGoogleDrive() {
     }
 }
 
-
 function handleGoogleSignIn(response) {
     appState.googleAuth = response;
     showToast('Google авторизация успешна', 'success');
@@ -289,30 +725,28 @@ async function loadData() {
             appState.reports = data.reports || [];
             appState.cars = data.cars || {};
         } else {
-            const data = localStorage.getItem('carReportsData');
-            if (data) {
-                const parsed = JSON.parse(data);
-                appState.reports = parsed.reports || [];
-                appState.cars = parsed.cars || {};
-            }
+            appState.reports = await Storage.getAllReports();
+            appState.cars = await Storage.getCars();
         }
         Logger.success('Data', 'Данные загружены', { reportsCount: appState.reports.length });
     } catch (error) {
         Logger.error('Data', 'Ошибка загрузки данных', { message: error.message });
+        appState.reports = [];
+        appState.cars = {};
     }
 }
 
 async function saveData() {
-    const data = {
-        reports: appState.reports,
-        cars: appState.cars
-    };
-    
     try {
         if (isElectron) {
+            const data = {
+                reports: appState.reports,
+                cars: appState.cars
+            };
             await ipcRenderer.invoke('save-data', data);
         } else {
-            localStorage.setItem('carReportsData', JSON.stringify(data));
+            await Storage.saveReports(appState.reports);
+            await Storage.saveCars(appState.cars);
         }
         Logger.debug('Data', 'Данные сохранены', { reportsCount: appState.reports.length });
     } catch (error) {
@@ -321,17 +755,18 @@ async function saveData() {
 }
 
 async function loadSettings() {
+    let settings = null;
+    
     if (isElectron) {
-        const settings = await ipcRenderer.invoke('load-settings');
-        appState.settings = { ...appState.settings, ...settings };
+        settings = await ipcRenderer.invoke('load-settings');
     } else {
-        const settings = localStorage.getItem('carReportsSettings');
-        if (settings) {
-            appState.settings = { ...appState.settings, ...JSON.parse(settings) };
-        }
+        settings = await Storage.getSettings();
     }
     
-    // Заполняем поля настроек
+    if (settings) {
+        appState.settings = { ...appState.settings, ...settings };
+    }
+    
     const elements = {
         'openai-key': appState.settings.openaiKey || '',
         'gemini-key': appState.settings.geminiKey || '',
@@ -345,13 +780,11 @@ async function loadSettings() {
         if (el) el.value = value;
     }
     
-    // Выбор провайдера
     const providerSelect = document.getElementById('ai-provider');
     if (providerSelect) {
         providerSelect.value = appState.settings.aiProvider || 'openai';
     }
     
-    // Превью логотипа
     if (appState.settings.logoUrl || appState.settings.logoBase64) {
         const logoImg = document.getElementById('logo-img');
         const logoPreview = document.getElementById('logo-preview');
@@ -373,12 +806,10 @@ async function saveSettings() {
     if (isElectron) {
         await ipcRenderer.invoke('save-settings', appState.settings);
     } else {
-        localStorage.setItem('carReportsSettings', JSON.stringify(appState.settings));
+        await Storage.saveSettings(appState.settings);
     }
     
     showToast('Настройки сохранены', 'success');
-    
-    // Обновить превью логотипа
     updateLogoPreview();
     initGoogleAuth();
 }
@@ -395,11 +826,11 @@ function updateLogoPreview() {
         }
     }
 }
+
 async function uploadToGoogleDocs(report) {
     if (!isElectron) return;
 
     try {
-        // Проверяем авторизацию
         const isAuthorized = await ipcRenderer.invoke('check-google-auth');
         if (!isAuthorized) {
             showToast('Сначала подключите Google Drive', 'warning');
@@ -407,7 +838,6 @@ async function uploadToGoogleDocs(report) {
             return;
         }
 
-        // ← ДОБАВЬТЕ ПРОВЕРКУ
         if (!report || !report.htmlContent) {
             showToast('Отчёт не содержит данных для экспорта', 'error');
             return;
@@ -417,7 +847,7 @@ async function uploadToGoogleDocs(report) {
         
         const result = await ipcRenderer.invoke('create-google-doc', {
             title: `Отчёт Авто: ${report.brand || ''} ${report.vin || ''}`,
-            contentHtml: report.htmlContent // ← Убедитесь что это не undefined
+            contentHtml: report.htmlContent
         });
 
         if (result.success) {
@@ -435,10 +865,6 @@ async function uploadToGoogleDocs(report) {
     }
 }
 
-
-
-
-// Загрузка логотипа из файла
 function handleLogoUpload(event) {
     const file = event.target.files[0];
     if (!file) return;
@@ -466,7 +892,6 @@ function showPage(pageName) {
         page.classList.remove('hidden');
     }
     
-    // Обновить активность в сайдбаре
     document.querySelectorAll('.sidebar-item').forEach(item => {
         item.classList.remove('active');
         if (item.dataset.page === pageName) {
@@ -474,7 +899,6 @@ function showPage(pageName) {
         }
     });
     
-    // Обновить активность в мобильной навигации
     document.querySelectorAll('.bottom-nav-item').forEach(item => {
         item.classList.remove('active');
         if (item.dataset.page === pageName) {
@@ -484,6 +908,10 @@ function showPage(pageName) {
     
     if (pageName === 'history') {
         renderReportsList();
+    }
+    
+    if (pageName === 'settings') {
+        showStorageStats();
     }
 }
 
@@ -574,7 +1002,6 @@ function renderReportsList() {
     
     if (noReports) noReports.classList.add('hidden');
     
-    // Группируем по VIN
     const groupedByVIN = {};
     filteredReports.forEach(report => {
         const vin = report.vin || 'Неизвестно';
@@ -584,7 +1011,6 @@ function renderReportsList() {
         groupedByVIN[vin].push(report);
     });
     
-    // Сортируем группы по дате последнего отчёта
     const sortedVINs = Object.keys(groupedByVIN).sort((a, b) => {
         const latestA = Math.max(...groupedByVIN[a].map(r => new Date(r.createdAt)));
         const latestB = Math.max(...groupedByVIN[b].map(r => new Date(r.createdAt)));
@@ -598,7 +1024,6 @@ function renderReportsList() {
         
         return `
             <div class="card-gradient rounded-2xl p-6 mb-4">
-                <!-- Заголовок группы -->
                 <div class="flex items-center justify-between mb-4 cursor-pointer" onclick="toggleVINGroup('${vin}')">
                     <div class="flex-1">
                         <div class="flex items-center gap-3 mb-2">
@@ -622,9 +1047,8 @@ function renderReportsList() {
                     </div>
                 </div>
                 
-                <!-- Список отчётов в группе -->
                 <div id="group-${vin}" class="${hasMultiple ? 'hidden' : ''} space-y-3 mt-4 pt-4 border-t border-white/10" 
-     style="transition: max-height 0.3s ease-in-out, opacity 0.3s ease-in-out; max-height: ${hasMultiple ? '0px' : 'none'}; opacity: ${hasMultiple ? '0' : '1'}; overflow: hidden;">
+                     style="transition: max-height 0.3s ease-in-out, opacity 0.3s ease-in-out; max-height: ${hasMultiple ? '0px' : 'none'}; opacity: ${hasMultiple ? '0' : '1'}; overflow: hidden;">
                     ${reports.map(report => {
                         const typeLabel = report.type === 'insurance' ? 'Страховой' : 'Технический';
                         const typeIcon = report.type === 'insurance' ? 'fa-file-invoice' : 'fa-file-alt';
@@ -675,7 +1099,6 @@ function toggleVINGroup(vin) {
     if (group && arrow) {
         if (group.classList.contains('hidden')) {
             group.classList.remove('hidden');
-            // Даём время браузеру применить display
             setTimeout(() => {
                 group.style.maxHeight = group.scrollHeight + 'px';
                 group.style.opacity = '1';
@@ -690,8 +1113,6 @@ function toggleVINGroup(vin) {
         arrow.classList.toggle('rotate-180');
     }
 }
-
-
 
 function renderCarDetails(vin) {
     const container = document.getElementById('car-details');
@@ -761,7 +1182,6 @@ function renderReportContent(report) {
     const isEditing = container.getAttribute('data-editing') === 'true';
     
     container.innerHTML = `
-        <!-- Панель управления -->
         <div class="flex items-center justify-between mb-6 p-4 bg-black/30 rounded-xl">
             <div class="flex items-center gap-3">
                 <span class="text-sm text-gray-400">${typeLabel}</span>
@@ -779,7 +1199,6 @@ function renderReportContent(report) {
             </div>
         </div>
         
-        <!-- Контент отчёта -->
         <div id="report-editable" 
              contenteditable="false" 
              class="report-content-editable"
@@ -799,7 +1218,6 @@ async function toggleEditMode() {
     const isEditing = container.getAttribute('data-editing') === 'true';
     
     if (isEditing) {
-        // Сохраняем изменения
         appState.currentReport.htmlContent = editable.innerHTML;
         await saveData();
         
@@ -812,7 +1230,6 @@ async function toggleEditMode() {
         
         showToast('Изменения сохранены!', 'success');
         
-        // Обновляем PDF в Drive если он существует (для обеих версий)
         if (appState.currentReport.driveFileId) {
             console.log('[Save] Auto-updating Drive file...');
             
@@ -833,7 +1250,6 @@ async function toggleEditMode() {
                     } else {
                         console.error('[Save] Drive update failed:', result.error);
                         
-                        // Если обновление не удалось - перезагружаем заново
                         showToast('Загрузка нового PDF...', 'info');
                         
                         const uploadResult = await ipcRenderer.invoke('save-and-upload-pdf', {
@@ -854,13 +1270,11 @@ async function toggleEditMode() {
                     showToast('Ошибка обновления Drive: ' + error.message, 'error');
                 }
             } else {
-                // Веб версия - обновляем в фоне
                 uploadOrUpdateDriveFile().catch(error => {
                     console.error('[Save] Background Drive update failed:', error);
                 });
             }
         } else if (isElectron && appState.currentReport.localPdfPath) {
-            // Есть локальный PDF но нет в Drive - обновляем локально
             showToast('Обновление локального PDF...', 'info');
             
             try {
@@ -886,7 +1300,6 @@ async function toggleEditMode() {
         }
         
     } else {
-        // Включаем режим редактирования
         editable.contentEditable = 'true';
         editable.style.border = '2px solid #4a4a8a';
         editable.style.transition = 'border 0.2s';
@@ -900,7 +1313,6 @@ async function toggleEditMode() {
     }
 }
 
-
 // ============================================
 // Работа с изображениями
 // ============================================
@@ -909,9 +1321,7 @@ async function selectFiles() {
     if (isElectron) {
         const result = await ipcRenderer.invoke('select-files');
         if (!result.canceled && result.files.length > 0) {
-            // Вместо addImages(result.files) делаем так:
             for (const file of result.files) {
-                // file.data уже содержит base64 из main.js
                 const processed = await processImage(file.data, file.name);
                 addImages(processed);
             }
@@ -924,7 +1334,7 @@ async function selectFiles() {
 function handleFileSelect(event) {
     const files = Array.from(event.target.files);
     processFiles(files);
-    event.target.value = ''; // Сброс для повторного выбора тех же файлов
+    event.target.value = '';
 }
 
 function handleDragOver(event) {
@@ -953,8 +1363,6 @@ async function processFiles(files) {
         const reader = new FileReader();
         reader.onload = async (e) => {
             const originalData = e.target.result;
-            
-            // Обрабатываем изображение (сжимаем если нужно, разбиваем длинные)
             const processedImages = await processImage(originalData, file.name);
             addImages(processedImages);
         };
@@ -962,7 +1370,6 @@ async function processFiles(files) {
     }
 }
 
-// Обработка изображения - сжатие и разбивка
 async function processImage(dataUrl, fileName) {
     return new Promise((resolve) => {
         const img = new Image();
@@ -973,8 +1380,7 @@ async function processImage(dataUrl, fileName) {
             
             let { width, height } = img;
             console.log(`[processImage] ${fileName}: ${width}x${height}, ratio: ${height/width}`);
-            console.log(`[processImage] Should split: ${height / width > 3}`);
-            // Если изображение очень длинное (высота > 3x ширины), разбиваем на части
+            
             if (height > width * 3) {
                 const chunks = Math.ceil(height / CHUNK_HEIGHT);
                 const chunkActualHeight = Math.ceil(height / chunks);
@@ -984,7 +1390,6 @@ async function processImage(dataUrl, fileName) {
                     const endY = Math.min((i + 1) * chunkActualHeight, height);
                     const chunkHeight = endY - startY;
                     
-                    // Масштабируем если нужно
                     let scaledWidth = width;
                     let scaledChunkHeight = chunkHeight;
                     
@@ -998,16 +1403,14 @@ async function processImage(dataUrl, fileName) {
                     canvas.height = scaledChunkHeight;
                     
                     ctx.drawImage(img, 
-                        0, startY, width, chunkHeight,  // source
-                        0, 0, scaledWidth, scaledChunkHeight  // destination
+                        0, startY, width, chunkHeight,
+                        0, 0, scaledWidth, scaledChunkHeight
                     );
                     
-                    // Сжимаем качество для уменьшения размера
                     let quality = 0.85;
                     let data = canvas.toDataURL('image/jpeg', quality);
                     
-                    // Уменьшаем качество если файл слишком большой
-                    while (data.length > MAX_IMAGE_BYTES * 1.37 && quality > 0.3) { // base64 ~37% больше
+                    while (data.length > MAX_IMAGE_BYTES * 1.37 && quality > 0.3) {
                         quality -= 0.1;
                         data = canvas.toDataURL('image/jpeg', quality);
                     }
@@ -1020,7 +1423,6 @@ async function processImage(dataUrl, fileName) {
                     });
                 }
             } else {
-                // Обычное изображение - просто масштабируем если нужно
                 let scaledWidth = width;
                 let scaledHeight = height;
                 
@@ -1063,7 +1465,6 @@ function addImages(images) {
     document.getElementById('report-options').classList.remove('hidden');
     document.getElementById('generate-section').classList.remove('hidden');
 }
-
 
 function renderImagesPreview() {
     const grid = document.getElementById('images-grid');
@@ -1129,12 +1530,10 @@ function closeImageModal(event) {
 // ============================================
 
 function repairIncompleteJSON(jsonStr) {
-    // Подсчитываем открытые и закрытые скобки и кавычки
     let braceCount = 0;
     let bracketCount = 0;
     let inString = false;
     let escaped = false;
-    let lastCharWasQuote = false;
     
     for (let i = 0; i < jsonStr.length; i++) {
         const char = jsonStr[i];
@@ -1151,9 +1550,6 @@ function repairIncompleteJSON(jsonStr) {
         
         if (char === '"') {
             inString = !inString;
-            lastCharWasQuote = true;
-        } else {
-            lastCharWasQuote = false;
         }
         
         if (!inString) {
@@ -1164,24 +1560,19 @@ function repairIncompleteJSON(jsonStr) {
         }
     }
     
-    // Если строка заканчивается незакрытой кавычкой, пытаемся понять контекст
     if (inString && jsonStr.trim().endsWith('"')) {
-        // Скорее всего обрезана строка, удаляем незавершенную часть
         jsonStr = jsonStr.substring(0, jsonStr.lastIndexOf('"'));
     }
     
-    // Закрываем незакрытые структуры
     if (bracketCount > 0) {
         jsonStr += ']'.repeat(bracketCount);
     } else if (bracketCount < 0) {
-        // Если закрывающих скобок больше, удаляем лишние
         jsonStr = jsonStr.replace(/\]+$/, '');
     }
     
     if (braceCount > 0) {
         jsonStr += '}'.repeat(braceCount);
     } else if (braceCount < 0) {
-        // Если закрывающих скобок больше, удаляем лишние
         jsonStr = jsonStr.replace(/\}+$/, '');
     }
     
@@ -1241,7 +1632,6 @@ async function generateReport() {
         
         updateProgress('Обработка ответа...', 70);
         
-        // Парсим JSON из ответа
         let reportData;
         try {
             let jsonText = content;
@@ -1271,103 +1661,98 @@ async function generateReport() {
             showToast('Предупреждение: ошибка парсинга ответа ИИ', 'warning');
         }
         
-        // Создание отчётов
-updateProgress('Создание отчётов...', 80);
+        updateProgress('Создание отчётов...', 80);
 
-const tariff = document.querySelector('input[name="report-tariff"]:checked')?.value || 'full';
-const reports = [];
+        const tariff = document.querySelector('input[name="report-tariff"]:checked')?.value || 'full';
+        const reports = [];
 
-// Один отчёт в зависимости от тарифа
-let htmlContent;
-let reportType = 'full';
-if (tariff === 'insurance') {
-    htmlContent = generateInsuranceReport(reportData);
-    reportType = 'insurance';
-} else if (tariff === 'short') {
-    htmlContent = generateHTMLReport(reportData, 'short');
-    reportType = 'short';
-} else {
-    htmlContent = generateHTMLReport(reportData, 'full');
-    reportType = 'full';
-}
+        let htmlContent;
+        let reportType = 'full';
+        if (tariff === 'insurance') {
+            htmlContent = generateInsuranceReport(reportData);
+            reportType = 'insurance';
+        } else if (tariff === 'short') {
+            htmlContent = generateHTMLReport(reportData, 'short');
+            reportType = 'short';
+        } else {
+            htmlContent = generateHTMLReport(reportData, 'full');
+            reportType = 'full';
+        }
 
-reports.push({
-    id: Date.now().toString(),
-    type: reportType,
-    createdAt: new Date().toISOString(),
-    vin: reportData.vin || 'Неизвестно',
-    brand: reportData.brand || 'Неизвестно',
-    model: reportData.model || 'Неизвестно',
-    rating: reportData.rating || null,
-    mileage: reportData.lastMileage || null,
-    data: reportData,
-    htmlContent: htmlContent,
-    driveUrl: null,
-    driveFileId: null,
-    localPdfPath: null,
-    aiProvider: provider,
-    images: appState.images.slice(0, 3).map(i => ({ name: i.name }))
-});
+        reports.push({
+            id: Date.now().toString(),
+            type: reportType,
+            createdAt: new Date().toISOString(),
+            vin: reportData.vin || 'Неизвестно',
+            brand: reportData.brand || 'Неизвестно',
+            model: reportData.model || 'Неизвестно',
+            rating: reportData.rating || null,
+            mileage: reportData.lastMileage || null,
+            data: reportData,
+            htmlContent: htmlContent,
+            driveUrl: null,
+            driveFileId: null,
+            localPdfPath: null,
+            aiProvider: provider,
+            images: appState.images.slice(0, 3).map(i => ({ name: i.name }))
+        });
 
-const report = reports[0];
+        const report = reports[0];
 
-// --- АВТОСОХРАНЕНИЕ PDF + GOOGLE DRIVE ---
-if (isElectron) {
-    for (let i = 0; i < reports.length; i++) {
-        const rep = reports[i];
-        const reportType = rep.type === 'full' ? 'Полный' : 'Короткий';
-        
-        updateProgress(`Сохранение ${reportType} PDF (${i+1}/${reports.length})...`, 85 + (i * 5));
-        
-        try {
-            const pdfFilename = `${sanitizeForFilename(rep.vin)}_${rep.type}_${formatDateForFile(rep.createdAt)}.pdf`;
-            
-            const result = await ipcRenderer.invoke('save-and-upload-pdf', {
-                htmlContent: rep.htmlContent,
-                filename: pdfFilename
-            });
-            
-            if (result.success) {
-                rep.localPdfPath = result.localPath;
+        if (isElectron) {
+            for (let i = 0; i < reports.length; i++) {
+                const rep = reports[i];
+                const reportTypeLabel = rep.type === 'full' ? 'Полный' : 'Короткий';
                 
-                if (result.driveUrl) {
-                    rep.driveUrl = result.driveUrl;
-                    rep.driveFileId = result.driveFileId;
+                updateProgress(`Сохранение ${reportTypeLabel} PDF (${i+1}/${reports.length})...`, 85 + (i * 5));
+                
+                try {
+                    const pdfFilename = `${sanitizeForFilename(rep.vin)}_${rep.type}_${formatDateForFile(rep.createdAt)}.pdf`;
+                    
+                    const result = await ipcRenderer.invoke('save-and-upload-pdf', {
+                        htmlContent: rep.htmlContent,
+                        filename: pdfFilename
+                    });
+                    
+                    if (result.success) {
+                        rep.localPdfPath = result.localPath;
+                        
+                        if (result.driveUrl) {
+                            rep.driveUrl = result.driveUrl;
+                            rep.driveFileId = result.driveFileId;
+                        }
+                    }
+                } catch (pdfError) {
+                    console.error(`${reportTypeLabel} PDF error:`, pdfError);
                 }
             }
-        } catch (pdfError) {
-            console.error(`${reportType} PDF error:`, pdfError);
+            
+            if (reports.some(r => r.driveUrl)) {
+                showToast('PDF загружены в Drive!', 'success');
+                const firstDriveUrl = reports.find(r => r.driveUrl)?.driveUrl;
+                if (firstDriveUrl) {
+                    navigator.clipboard.writeText(firstDriveUrl);
+                }
+            } else if (reports.some(r => r.localPdfPath)) {
+                showToast('PDF сохранены локально', 'info');
+            }
         }
-    }
-    
-    if (reports.some(r => r.driveUrl)) {
-        showToast('PDF загружены в Drive!', 'success');
-        const firstDriveUrl = reports.find(r => r.driveUrl)?.driveUrl;
-        if (firstDriveUrl) {
-            navigator.clipboard.writeText(firstDriveUrl);
-        }
-    } else if (reports.some(r => r.localPdfPath)) {
-        showToast('PDF сохранены локально', 'info');
-    }
-}
-// ---------------------------------------------------
 
-updateProgress('Отчёт готов!', 95);
+        updateProgress('Отчёт готов!', 95);
 
-appState.reports.unshift(...reports);
-await saveData();
+        appState.reports.unshift(...reports);
+        await saveData();
 
-updateProgress('Завершено!', 100);
+        updateProgress('Завершено!', 100);
 
-clearImages();
-updateUI();
+        clearImages();
+        updateUI();
 
-setTimeout(() => {
-    document.getElementById('progress-section').classList.add('hidden');
-    document.getElementById('generate-section').classList.remove('hidden');
-    showReportPage(report.id);
-}, 500);
-
+        setTimeout(() => {
+            document.getElementById('progress-section').classList.add('hidden');
+            document.getElementById('generate-section').classList.remove('hidden');
+            showReportPage(report.id);
+        }, 500);
         
     } catch (error) {
         Logger.error('GenerateReport', 'Критическая ошибка генерации', { 
@@ -1376,7 +1761,6 @@ setTimeout(() => {
         });
         document.getElementById('progress-section').classList.add('hidden');
         document.getElementById('generate-section').classList.remove('hidden');
-        // showToast уже вызывается в Logger.error
     }
 }
 
@@ -1579,50 +1963,7 @@ function getSystemPrompt() {
       "recordsCount": 16,
       "works": [
         {"part": "ПРИМЕР: Крепёж переднего бампера - укажи РЕАЛЬНЫЕ детали", "action": "замена / ремонт / окраска / рихтовка", "quantity": 2},
-        {"part": "Следующая деталь", "action": "замена", "quantity": 1},
-        {"part": "Декоративная накладка переднего бампера", "action": "замена", "quantity": 1},
-        {"part": "Воздуховод", "action": "замена", "quantity": 1},
-        {"part": "Усилитель решётки переднего бампера", "action": "замена", "quantity": 1},
-        {"part": "Внутренняя панель правого переднего крыла", "action": "замена", "quantity": 1},
-        {"part": "Каркас правого переднего крыла", "action": "замена", "quantity": 1},
-        {"part": "Кронштейн крепления переднего радара", "action": "замена", "quantity": 1},
-        {"part": "Верхний кронштейн центральной решётки", "action": "замена", "quantity": 1},
-        {"part": "Крепление переднего бампера (правое)", "action": "замена", "quantity": 1},
-        {"part": "Защитный кожух буксировочного крюка", "action": "замена", "quantity": 1},
-        {"part": "Кожух переднего бампера", "action": "замена", "quantity": 1},
-        {"part": "Правое переднее крыло", "action": "ремонт", "quantity": 2},
-        {"part": "Правая передняя фара", "action": "ремонт", "quantity": 1},
-        {"part": "Каркас переднего бампера", "action": "ремонт", "quantity": 2},
-        {"part": "Внешняя накладка переднего бампера", "action": "ремонт", "quantity": 2}
-      ]
-    },
-    {
-      "date": "2023 Q1",
-      "type": "ДТП",
-      "damageAmount": "2000 юаней",
-      "status": "Закрыто",
-      "recordsCount": 7,
-      "works": [
-        {"part": "Правая задняя дверь", "action": "окраска", "quantity": 1},
-        {"part": "Правая боковина", "action": "окраска", "quantity": 1},
-        {"part": "Правая задняя дверь", "action": "рихтовка", "quantity": 1},
-        {"part": "Задний бампер", "action": "окраска", "quantity": 1},
-        {"part": "Внешняя панель каркаса кузова справа", "action": "рихтовка", "quantity": 1},
-        {"part": "Правая передняя дверь", "action": "окраска", "quantity": 1},
-        {"part": "Правый задний литой диск", "action": "ремонт", "quantity": 1}
-      ]
-    },
-    {
-      "date": "2023 Q3",
-      "type": "Прочее",
-      "damageAmount": "2000 юаней",
-      "status": "Закрыто",
-      "recordsCount": 5,
-      "works": [
-        {"part": "Передний бампер", "action": "замена", "quantity": 1},
-        {"part": "Левая декоративная решётка переднего бампера", "action": "замена", "quantity": 1},
-        {"part": "Левая передняя шина", "action": "замена", "quantity": 1},
-        {"part": "Внешняя панель правого переднего крыла", "action": "замена", "quantity": 1}
+        {"part": "Следующая деталь", "action": "замена", "quantity": 1}
       ]
     }
   ],
@@ -1656,9 +1997,10 @@ function getSystemPrompt() {
 Анализируй ВСЕ детали на изображениях. Если данных нет — используй "Нет информации". Строго JSON! В ИТОГОВОМ ОТВЕТЕ НЕ ДОЛЖНО БЫТЬ КИТАЙСКИХ СИМВОЛОВ!`;
 }
 
+// ============================================
+// Вызов API
+// ============================================
 
-
-// Вызов OpenAI API
 async function callOpenAIAPI(apiKey, systemPrompt, userPrompt) {
     Logger.info('OpenAI', 'Начало запроса к OpenAI API', { imagesCount: appState.images.length });
     
@@ -1679,7 +2021,7 @@ async function callOpenAIAPI(apiKey, systemPrompt, userPrompt) {
                 'Authorization': `Bearer ${apiKey}`
             },
             body: JSON.stringify({
-                model: 'gpt-5.2',
+                model: 'gpt-4o',
                 messages: [
                     { role: 'system', content: systemPrompt },
                     { 
@@ -1690,7 +2032,7 @@ async function callOpenAIAPI(apiKey, systemPrompt, userPrompt) {
                         ]
                     }
                 ],
-                max_completion_tokens: 8192
+                max_tokens: 8192
             })
         });
     } catch (networkError) {
@@ -1702,7 +2044,6 @@ async function callOpenAIAPI(apiKey, systemPrompt, userPrompt) {
         const errorText = await response.text();
         Logger.error('OpenAI', `API вернул ошибку ${response.status}`, { status: response.status, error: errorText.slice(0, 300) });
         
-        // Разбираем распространённые ошибки
         if (response.status === 401) {
             throw new Error('Неверный API ключ OpenAI. Проверьте ключ в настройках.');
         } else if (response.status === 429) {
@@ -1717,316 +2058,7 @@ async function callOpenAIAPI(apiKey, systemPrompt, userPrompt) {
     Logger.success('OpenAI', 'Ответ успешно получен');
     return data.choices[0].message.content;
 }
-async function openDriveLink() {
-    if (!appState.currentReport) return;
-    
-    console.log('[openDriveLink] Current driveUrl:', appState.currentReport.driveUrl);
-    console.log('[openDriveLink] Current driveFileId:', appState.currentReport.driveFileId);
-    
-    // Если файл уже на Drive и мы в вебе - обновляем его перед открытием
-    if (appState.currentReport.driveFileId && !isElectron) {
-        console.log('[openDriveLink] Updating existing Drive file before opening...');
-        await uploadOrUpdateDriveFile();
-        return;
-    }
-    
-    // Если уже есть ссылка (Electron версия) - просто открываем
-    if (appState.currentReport.driveUrl) {
-        const urlWithCache = appState.currentReport.driveUrl.includes('?') 
-            ? `${appState.currentReport.driveUrl}&t=${Date.now()}`
-            : `${appState.currentReport.driveUrl}?t=${Date.now()}`;
-        console.log('[openDriveLink] Opening existing link with cache buster:', urlWithCache);
-        if (isElectron) {
-            ipcRenderer.invoke('open-external', urlWithCache);
-        } else {
-            window.open(urlWithCache, '_blank');
-        }
-        return;
-    }
-    
-    console.log('[openDriveLink] No existing link, uploading to Drive...');
-    await uploadOrUpdateDriveFile();
-}
 
-async function uploadOrUpdateDriveFile() {
-    Logger.info('Drive', 'Начало загрузки/обновления файла в Drive');
-    
-    // Если ссылки нет - загружаем в Drive
-    if (!isElectron) {
-        // ЛОГИКА ДЛЯ ВЕБА
-        try {
-            Logger.info('Drive', 'Запуск процесса загрузки...');
-            showToast('Авторизация Google Drive...', 'info');
-            
-            const accessToken = await getGoogleAccessToken();
-            
-            if (!accessToken) {
-                console.error('[Drive Upload] No access token');
-                showToast('Необходима авторизация Google', 'error');
-                return;
-            }
-            
-            console.log('[Drive Upload] Access token obtained');
-            
-            // ВСЕГДА генерируем новый PDF с актуальным htmlContent
-            console.log('[Drive Upload] Generating fresh PDF from current HTML...');
-            showToast('Генерация PDF...', 'info');
-            
-            const response = await fetch('/api/generate-pdf', {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({
-                    htmlContent: appState.currentReport.htmlContent
-                })
-            });
-
-            const result = await response.json();
-            console.log('[Drive Upload] PDF generation response:', result.success ? 'Success' : 'Failed');
-            
-            if (!result.success) {
-                throw new Error(result.error);
-            }
-            
-            const pdfBase64 = result.pdfBase64;
-            appState.currentReport.pdfBase64 = pdfBase64; // Обновляем сохраненную версию
-            await saveData();
-            
-            console.log('[Drive Upload] PDF ready, base64 length:', pdfBase64.length);
-            showToast('Загрузка в Google Drive...', 'info');
-            
-            const filename = `${sanitizeForFilename(appState.currentReport.vin)}_${formatDateForFile(appState.currentReport.createdAt)}.pdf`;
-            const pdfBlob = base64ToBlob(pdfBase64, 'application/pdf');
-            
-            let uploadResponse;
-            
-            // Если файл уже существует на Drive - удаляем старый и создаём новый
-            if (appState.currentReport.driveFileId) {
-                console.log('[Drive Upload] Deleting old file ID:', appState.currentReport.driveFileId);
-                showToast('Удаление старой версии...', 'info');
-                
-                try {
-                    await fetch(`https://www.googleapis.com/drive/v3/files/${appState.currentReport.driveFileId}`, {
-                        method: 'DELETE',
-                        headers: {
-                            'Authorization': `Bearer ${accessToken}`
-                        }
-                    });
-                    console.log('[Drive Upload] Old file deleted');
-                } catch (deleteError) {
-                    console.warn('[Drive Upload] Failed to delete old file:', deleteError);
-                }
-                
-                // Очищаем старый ID
-                appState.currentReport.driveFileId = null;
-                appState.currentReport.driveUrl = null;
-            }
-            
-            // Создаём новый файл
-            console.log('[Drive Upload] Creating new file');
-            const metadata = {
-                name: filename,
-                mimeType: 'application/pdf',
-                parents: ['1mf710QcMqsgu7ybB6TBH6gpM76KB-a_P']
-            };
-            
-            const form = new FormData();
-            form.append('metadata', new Blob([JSON.stringify(metadata)], { type: 'application/json' }));
-            form.append('file', pdfBlob);
-            
-            uploadResponse = await fetch('https://www.googleapis.com/upload/drive/v3/files?uploadType=multipart&fields=id,webViewLink,modifiedTime', {
-                method: 'POST',
-                headers: {
-                    'Authorization': `Bearer ${accessToken}`
-                },
-                body: form
-            });
-            
-            if (!uploadResponse.ok) {
-                const errorText = await uploadResponse.text();
-                console.error('[Drive Upload] Upload failed:', uploadResponse.status, errorText);
-                throw new Error(`Drive API error: ${uploadResponse.status} - ${errorText}`);
-            }
-            
-            const file = await uploadResponse.json();
-            console.log('[Drive Upload] Upload successful:', file);
-            
-            // Делаем файл публичным
-            console.log('[Drive Upload] Setting file permissions...');
-            await fetch(`https://www.googleapis.com/drive/v3/files/${file.id}/permissions`, {
-                method: 'POST',
-                headers: {
-                    'Authorization': `Bearer ${accessToken}`,
-                    'Content-Type': 'application/json'
-                },
-                body: JSON.stringify({
-                    role: 'reader',
-                    type: 'anyone'
-                })
-            });
-            
-            console.log('[Drive Upload] Permissions set, saving state...');
-            
-            // Получаем обновленную информацию о файле включая modifiedTime
-            const fileInfoResponse = await fetch(`https://www.googleapis.com/drive/v3/files/${file.id}?fields=id,webViewLink,modifiedTime`, {
-                headers: {
-                    'Authorization': `Bearer ${accessToken}`
-                }
-            });
-            
-            const fileInfo = await fileInfoResponse.json();
-            console.log('[Drive Upload] File info:', fileInfo);
-            
-            appState.currentReport.driveUrl = fileInfo.webViewLink;
-            appState.currentReport.driveFileId = fileInfo.id;
-            appState.currentReport.driveModifiedTime = fileInfo.modifiedTime;
-            await saveData();
-            
-            // Добавляем timestamp к ссылке для обхода кеша
-            const modTime = fileInfo.modifiedTime ? new Date(fileInfo.modifiedTime).getTime() : Date.now();
-            const urlWithCache = fileInfo.webViewLink.includes('?')
-                ? `${fileInfo.webViewLink}&t=${modTime}`
-                : `${fileInfo.webViewLink}?t=${modTime}`;
-            
-            console.log('[Drive Upload] Opening URL:', urlWithCache);
-            
-            // Копируем ссылку (может не сработать если окно не в фокусе)
-            try {
-                await navigator.clipboard.writeText(fileInfo.webViewLink);
-                console.log('[Drive Upload] Link copied to clipboard');
-            } catch (clipboardError) {
-                console.warn('[Drive Upload] Clipboard write failed:', clipboardError.message);
-            }
-            
-            const isUpdate = appState.currentReport.driveFileId;
-            const message = isUpdate ? 'PDF обновлён в Drive!' : 'PDF загружен в Drive!';
-            console.log('[Drive Upload] Complete:', message);
-            showToast(message, 'success');
-            
-            // Небольшая задержка не нужна для нового файла
-            window.open(urlWithCache, '_blank');
-            
-        } catch (error) {
-            Logger.error('Drive', 'Ошибка загрузки в Drive', { message: error.message, stack: error.stack?.slice(0, 200) });
-            // showToast вызывается в Logger.error
-        }
-        return;
-    }
-    
-    try {
-        showToast('Проверка авторизации Google Drive...', 'info');
-        
-        const isAuthorized = await ipcRenderer.invoke('check-google-auth');
-        
-        if (!isAuthorized) {
-            const authConfirm = confirm('Google Drive не авторизован. Авторизовать сейчас?');
-            if (authConfirm) {
-                const result = await ipcRenderer.invoke('authorize-google');
-                if (!result.success) {
-                    showToast('Ошибка авторизации', 'error');
-                    return;
-                }
-                showToast('Авторизация успешна!', 'success');
-            } else {
-                return;
-            }
-        }
-        
-        showToast('Загрузка PDF в Google Drive...', 'info');
-        
-        const pdfFilename = `${sanitizeForFilename(appState.currentReport.vin)}_${formatDateForFile(appState.currentReport.createdAt)}.pdf`;
-        
-        // Если есть локальный файл - используем его
-        if (appState.currentReport.localPdfPath) {
-            const result = await ipcRenderer.invoke('upload-existing-pdf-to-drive', {
-                localPath: appState.currentReport.localPdfPath,
-                filename: pdfFilename
-            });
-            
-            if (result.success) {
-                appState.currentReport.driveUrl = result.url;
-                appState.currentReport.driveFileId = result.fileId;
-                await saveData();
-                
-                navigator.clipboard.writeText(result.url);
-                showToast('PDF загружен в Drive! Ссылка скопирована', 'success');
-                
-                ipcRenderer.invoke('open-external', result.url);
-            } else {
-                throw new Error(result.error || 'Ошибка загрузки');
-            }
-        } else {
-            // Генерируем PDF заново и загружаем
-            const result = await ipcRenderer.invoke('save-and-upload-pdf', {
-                htmlContent: appState.currentReport.htmlContent,
-                filename: pdfFilename
-            });
-            
-            if (result.success) {
-                appState.currentReport.localPdfPath = result.localPath;
-                
-                if (result.driveUrl) {
-                    appState.currentReport.driveUrl = result.driveUrl;
-                    appState.currentReport.driveFileId = result.fileId;
-                    await saveData();
-                    
-                    navigator.clipboard.writeText(result.driveUrl);
-                    showToast('PDF загружен в Drive! Ссылка скопирована', 'success');
-                    
-                    ipcRenderer.invoke('open-external', result.driveUrl);
-                } else {
-                    showToast('PDF сохранён, но не удалось загрузить в Drive', 'warning');
-                }
-            } else {
-                throw new Error(result.error || 'Ошибка создания PDF');
-            }
-        }
-    } catch (error) {
-        console.error('Drive upload error:', error);
-        
-        // Если ошибка токена - предлагаем переавторизоваться
-        if (error.message.includes('ECONNRESET') || error.message.includes('token') || error.message.includes('401')) {
-            const reauth = confirm('Проблема с авторизацией Google Drive. Переавторизовать?');
-            if (reauth) {
-                try {
-                    const result = await ipcRenderer.invoke('authorize-google');
-                    if (result.success) {
-                        showToast('Повторите попытку загрузки', 'info');
-                    }
-                } catch (e) {
-                    showToast('Ошибка авторизации', 'error');
-                }
-            }
-        } else {
-            showToast(`Ошибка: ${error.message}`, 'error');
-        }
-    }
-}
-
-
-
-function openLinkAndCopy(url) {
-    navigator.clipboard.writeText(url);
-    showToast('Ссылка скопирована!', 'success');
-    if (isElectron) {
-        ipcRenderer.invoke('open-external', url);
-    } else {
-        window.open(url, '_blank');
-    }
-}
-
-function copyReportLink() {
-    if (appState.currentReport?.driveUrl) {
-        navigator.clipboard.writeText(appState.currentReport.driveUrl);
-        showToast('Ссылка на Drive скопирована!', 'success');
-    } else {
-        showToast('Файл ещё не загружен в Drive', 'warning');
-    }
-}
-
-
-
-
-// Вызов Gemini API
 async function callGeminiAPI(apiKey, systemPrompt, userPrompt) {
     Logger.info('Gemini', 'Начало запроса к Gemini API', { imagesCount: appState.images.length });
     
@@ -2070,7 +2102,6 @@ async function callGeminiAPI(apiKey, systemPrompt, userPrompt) {
         const errorText = await response.text();
         Logger.error('Gemini', `API вернул ошибку ${response.status}`, { status: response.status, error: errorText.slice(0, 300) });
         
-        // Разбираем распространённые ошибки
         if (response.status === 400) {
             if (errorText.includes('API_KEY_INVALID')) {
                 throw new Error('Неверный API ключ Gemini. Проверьте ключ в настройках.');
@@ -2091,7 +2122,6 @@ async function callGeminiAPI(apiKey, systemPrompt, userPrompt) {
         return data.candidates[0].content.parts[0].text;
     }
     
-    // Проверяем на блокировку контента
     if (data.candidates && data.candidates[0] && data.candidates[0].finishReason === 'SAFETY') {
         Logger.error('Gemini', 'Контент заблокирован фильтром безопасности');
         throw new Error('Контент заблокирован фильтром безопасности Gemini.');
@@ -2113,11 +2143,9 @@ function updateProgress(status, percent) {
 function generateHTMLReport(data, tariff = 'full') {
     const logoSrc = appState.settings.logoBase64 || appState.settings.logoUrl || '';
     
-    // Функция для форматирования значений с единицами измерения (исправляет задвоение)
     const formatWithUnit = (value, unit, skipIfHasUnit = true) => {
         if (!value || value === '—') return '—';
         const strValue = String(value).trim();
-        // Проверяем, есть ли уже единица измерения в значении
         if (skipIfHasUnit && (strValue.includes(unit) || strValue.includes('км') || strValue.includes('год') || strValue.includes('kW') || strValue.includes('см'))) {
             return strValue;
         }
@@ -2451,7 +2479,7 @@ ${data.serviceHistory && data.serviceHistory.records && data.serviceHistory.reco
         <div style="background: #f8f9fa; border-radius: 12px; padding: 15px;">
             <h3 style="font-size: 14px; font-weight: bold; color: #2a2a5a; margin: 0 0 10px 0; padding-bottom: 8px; border-bottom: 2px solid #e0e0e0;">6. Характеристики ТС</h3>
             <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 8px; font-size: 11px;">
-                <div><span style="color: #888;">Объём двигателя:</span> <p style="font-weight: 600; margin: 2px 0;">${data.vehicleInfo.engineVolume ? formatWithUnit(data.vehicleInfo.engineVolume, 'см³') : '—'}</p></div>
+                                <div><span style="color: #888;">Объём двигателя:</span> <p style="font-weight: 600; margin: 2px 0;">${data.vehicleInfo.engineVolume ? formatWithUnit(data.vehicleInfo.engineVolume, 'см³') : '—'}</p></div>
                 <div><span style="color: #888;">Мощность:</span> <p style="font-weight: 600; margin: 2px 0;">${data.vehicleInfo.power ? formatWithUnit(data.vehicleInfo.power, 'kW') : '—'}</p></div>
                 <div><span style="color: #888;">КПП:</span> <p style="font-weight: 600; margin: 2px 0;">${data.vehicleInfo.transmission || '—'}</p></div>
                 <div><span style="color: #888;">Масса:</span> <p style="font-weight: 600; margin: 2px 0;">${data.vehicleInfo.weight ? formatWithUnit(data.vehicleInfo.weight, 'кг') : '—'}</p></div>
@@ -2524,7 +2552,6 @@ ${tariff === 'full' ? generateRecallBlock(data) : ''}
 </div>
 `;
 }
-
 
 // Генерация блока страховых случаев (для полного отчета)
 function generateInsuranceBlock(data) {
@@ -2620,12 +2647,10 @@ function generateInsuranceBlock(data) {
 `;
 }
 
-// Генерация краткого страхового отчёта
-// Генерация детального страхового отчёта
+// Генерация страхового отчёта
 function generateInsuranceReport(data) {
     const logoSrc = appState.settings.logoBase64 || appState.settings.logoUrl || '';
     
-    // Функция для форматирования значений с единицами измерения
     const formatWithUnit = (value, unit, skipIfHasUnit = true) => {
         if (!value || value === '—') return '—';
         const strValue = String(value).trim();
@@ -2724,7 +2749,7 @@ function generateInsuranceReport(data) {
         `}
     </div>
     
-    <!-- 4. Ремонт и повреждения (история страховых случаев) - ДЕТАЛЬНЫЙ БЛОК -->
+    <!-- 4. Ремонт и повреждения (история страховых случаев) -->
     <div style="margin-bottom: 25px; background: #f8f9fa; border-radius: 12px; padding: 20px;">
         <h2 style="font-size: 18px; font-weight: bold; color: #2a2a5a; margin: 0 0 15px 0; padding-bottom: 10px; border-bottom: 2px solid #e0e0e0;">Ремонт и повреждения (история страховых случаев)</h2>
         
@@ -2897,7 +2922,8 @@ function generateInsuranceReport(data) {
 `;
 }
 
-// Вспомогательная функция для генерации строки проверки риска
+// Вспомогательные функции для генерации HTML
+
 function generateRiskCheckRow(label, value) {
     const isOk = !value || value === 'не обнаружено' || value === 'Не обнаружено' || 
                  value === 'Нет' || value === 'Не зафиксировано' || 
@@ -2913,15 +2939,12 @@ function generateRiskCheckRow(label, value) {
     `;
 }
 
-// Вспомогательная функция для эмодзи-номеров
 function getEmojiNumber(num) {
     const emojis = ['0️⃣', '1️⃣', '2️⃣', '3️⃣', '4️⃣', '5️⃣', '6️⃣', '7️⃣', '8️⃣', '9️⃣', '🔟'];
     return num <= 10 ? emojis[num] : `#${num}`;
 }
 
-// Генерация блока отзывных кампаний производителя
 function generateRecallBlock(data) {
-    // Если нет данных об отзывах — не показываем блок вообще
     if (!data.recallRecords || data.recallRecords.length === 0) return '';
     
     return `
@@ -2986,7 +3009,6 @@ function generateRecallBlock(data) {
 `;
 }
 
-
 function generateStructuralElement(name, element) {
     if (!element) return '';
     const isOk = !element || element.status === 'ok' || !element.status;
@@ -3037,7 +3059,6 @@ function generateBodyPartElement(name, part) {
     `;
 }
 
-// Проверка наличия проблем в силовой структуре
 function hasStructuralProblems(structuralElements) {
     if (!structuralElements) return false;
     
@@ -3059,7 +3080,6 @@ function hasStructuralProblems(structuralElements) {
     return elements.some(el => el && el.status === 'problem');
 }
 
-// Генерация элемента силовой структуры только если есть проблема
 function generateStructuralElementIfProblem(name, element) {
     if (!element || element.status !== 'problem') return '';
     
@@ -3072,7 +3092,6 @@ function generateStructuralElementIfProblem(name, element) {
     </div>
     `;
 }
-
 
 function generateComponentHTML(name, component) {
     const isOk = !component || component.status === 'ok' || !component.status;
@@ -3088,7 +3107,6 @@ function generateComponentHTML(name, component) {
 }
 
 function generateComponentTableRow(name, component) {
-    // Определяем статус: ok, problem, no_data
     const status = component?.status || 'no_data';
     const isOk = status === 'ok';
     const isNoData = status === 'no_data' || !component;
@@ -3106,7 +3124,6 @@ function generateComponentTableRow(name, component) {
         statusColor = '#dc3545';
     }
     
-    // Примечание: если нет данных - ставим прочерк
     let noteText = '—';
     if (!isNoData) {
         const note = component?.note || component?.description || '';
@@ -3142,7 +3159,6 @@ async function exportToPDF() {
     Logger.info('PDF', `Имя файла: ${filename}`);
 
     if (!isElectron) {
-        // ЛОГИКА ДЛЯ ВЕБА - используем API
         try {
             showToast('Генерация PDF...', 'info');
             Logger.info('PDF', 'Отправка запроса на генерацию PDF');
@@ -3165,7 +3181,6 @@ async function exportToPDF() {
             if (result.success && result.pdfBase64) {
                 Logger.success('PDF', 'PDF сгенерирован', { length: result.pdfBase64.length });
                 
-                // Скачиваем PDF
                 const blob = base64ToBlob(result.pdfBase64, 'application/pdf');
                 const url = URL.createObjectURL(blob);
                 const a = document.createElement('a');
@@ -3176,10 +3191,6 @@ async function exportToPDF() {
                 document.body.removeChild(a);
                 URL.revokeObjectURL(url);
                 
-                // Сохраняем base64 для последующей загрузки в Drive
-                appState.currentReport.pdfBase64 = result.pdfBase64;
-                await saveData();
-                
                 Logger.success('PDF', 'PDF успешно скачан');
                 showToast('PDF успешно скачан!', 'success');
             } else {
@@ -3187,12 +3198,10 @@ async function exportToPDF() {
             }
         } catch (error) {
             Logger.error('PDF', 'Ошибка генерации PDF', { message: error.message });
-            // showToast вызывается в Logger.error
         }
         return;
     }
     
-    // ЛОГИКА ДЛЯ ELECTRON
     try {
         showToast('PDF экспортируется...', 'info');
         const result = await ipcRenderer.invoke('export-to-pdf', {
@@ -3205,136 +3214,292 @@ async function exportToPDF() {
     }
 }
 
-
 // ============================================
-// Экспорт в Google Docs
+// Google Drive функции
 // ============================================
 
-async function createGoogleDoc() {
+async function openDriveLink() {
     if (!appState.currentReport) return;
     
-    showToast('Создание Google Doc...', 'info');
-    console.log('[App] Creating Google Doc...');
+    console.log('[openDriveLink] Current driveUrl:', appState.currentReport.driveUrl);
+    console.log('[openDriveLink] Current driveFileId:', appState.currentReport.driveFileId);
+    
+    if (appState.currentReport.driveFileId && !isElectron) {
+        console.log('[openDriveLink] Updating existing Drive file before opening...');
+        await uploadOrUpdateDriveFile();
+        return;
+    }
+    
+    if (appState.currentReport.driveUrl) {
+        const urlWithCache = appState.currentReport.driveUrl.includes('?') 
+            ? `${appState.currentReport.driveUrl}&t=${Date.now()}`
+            : `${appState.currentReport.driveUrl}?t=${Date.now()}`;
+        console.log('[openDriveLink] Opening existing link with cache buster:', urlWithCache);
+        if (isElectron) {
+            ipcRenderer.invoke('open-external', urlWithCache);
+        } else {
+            window.open(urlWithCache, '_blank');
+        }
+        return;
+    }
+    
+    console.log('[openDriveLink] No existing link, uploading to Drive...');
+    await uploadOrUpdateDriveFile();
+}
+
+async function uploadOrUpdateDriveFile() {
+    Logger.info('Drive', 'Начало загрузки/обновления файла в Drive');
+    
+    if (!isElectron) {
+        try {
+            Logger.info('Drive', 'Запуск процесса загрузки...');
+            showToast('Авторизация Google Drive...', 'info');
+            
+            const accessToken = await getGoogleAccessToken();
+            
+            if (!accessToken) {
+                console.error('[Drive Upload] No access token');
+                showToast('Необходима авторизация Google', 'error');
+                return;
+            }
+            
+            console.log('[Drive Upload] Access token obtained');
+            
+            console.log('[Drive Upload] Generating fresh PDF from current HTML...');
+            showToast('Генерация PDF...', 'info');
+            
+            const response = await fetch('/api/generate-pdf', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    htmlContent: appState.currentReport.htmlContent
+                })
+            });
+
+            const result = await response.json();
+            console.log('[Drive Upload] PDF generation response:', result.success ? 'Success' : 'Failed');
+            
+            if (!result.success) {
+                throw new Error(result.error);
+            }
+            
+            const pdfBase64 = result.pdfBase64;
+            
+            console.log('[Drive Upload] PDF ready, base64 length:', pdfBase64.length);
+            showToast('Загрузка в Google Drive...', 'info');
+            
+            const filename = `${sanitizeForFilename(appState.currentReport.vin)}_${formatDateForFile(appState.currentReport.createdAt)}.pdf`;
+            const pdfBlob = base64ToBlob(pdfBase64, 'application/pdf');
+            
+            let uploadResponse;
+            
+            if (appState.currentReport.driveFileId) {
+                console.log('[Drive Upload] Deleting old file ID:', appState.currentReport.driveFileId);
+                showToast('Удаление старой версии...', 'info');
+                
+                try {
+                    await fetch(`https://www.googleapis.com/drive/v3/files/${appState.currentReport.driveFileId}`, {
+                        method: 'DELETE',
+                        headers: {
+                            'Authorization': `Bearer ${accessToken}`
+                        }
+                    });
+                    console.log('[Drive Upload] Old file deleted');
+                } catch (deleteError) {
+                    console.warn('[Drive Upload] Failed to delete old file:', deleteError);
+                }
+                
+                appState.currentReport.driveFileId = null;
+                appState.currentReport.driveUrl = null;
+            }
+            
+            console.log('[Drive Upload] Creating new file');
+            const metadata = {
+                name: filename,
+                mimeType: 'application/pdf',
+                parents: ['1mf710QcMqsgu7ybB6TBH6gpM76KB-a_P']
+            };
+            
+            const form = new FormData();
+            form.append('metadata', new Blob([JSON.stringify(metadata)], { type: 'application/json' }));
+            form.append('file', pdfBlob);
+            
+            uploadResponse = await fetch('https://www.googleapis.com/upload/drive/v3/files?uploadType=multipart&fields=id,webViewLink,modifiedTime', {
+                method: 'POST',
+                headers: {
+                    'Authorization': `Bearer ${accessToken}`
+                },
+                body: form
+            });
+            
+            if (!uploadResponse.ok) {
+                const errorText = await uploadResponse.text();
+                console.error('[Drive Upload] Upload failed:', uploadResponse.status, errorText);
+                throw new Error(`Drive API error: ${uploadResponse.status} - ${errorText}`);
+            }
+            
+            const file = await uploadResponse.json();
+            console.log('[Drive Upload] Upload successful:', file);
+            
+            console.log('[Drive Upload] Setting file permissions...');
+            await fetch(`https://www.googleapis.com/drive/v3/files/${file.id}/permissions`, {
+                method: 'POST',
+                headers: {
+                    'Authorization': `Bearer ${accessToken}`,
+                    'Content-Type': 'application/json'
+                },
+                body: JSON.stringify({
+                    role: 'reader',
+                    type: 'anyone'
+                })
+            });
+            
+            console.log('[Drive Upload] Permissions set, saving state...');
+            
+            const fileInfoResponse = await fetch(`https://www.googleapis.com/drive/v3/files/${file.id}?fields=id,webViewLink,modifiedTime`, {
+                headers: {
+                    'Authorization': `Bearer ${accessToken}`
+                }
+            });
+            
+            const fileInfo = await fileInfoResponse.json();
+            console.log('[Drive Upload] File info:', fileInfo);
+            
+            appState.currentReport.driveUrl = fileInfo.webViewLink;
+            appState.currentReport.driveFileId = fileInfo.id;
+            appState.currentReport.driveModifiedTime = fileInfo.modifiedTime;
+            await saveData();
+            
+            const modTime = fileInfo.modifiedTime ? new Date(fileInfo.modifiedTime).getTime() : Date.now();
+            const urlWithCache = fileInfo.webViewLink.includes('?')
+                ? `${fileInfo.webViewLink}&t=${modTime}`
+                : `${fileInfo.webViewLink}?t=${modTime}`;
+            
+            console.log('[Drive Upload] Opening URL:', urlWithCache);
+            
+            try {
+                await navigator.clipboard.writeText(fileInfo.webViewLink);
+                console.log('[Drive Upload] Link copied to clipboard');
+            } catch (clipboardError) {
+                console.warn('[Drive Upload] Clipboard write failed:', clipboardError.message);
+            }
+            
+            const isUpdate = appState.currentReport.driveFileId;
+            const message = isUpdate ? 'PDF обновлён в Drive!' : 'PDF загружен в Drive!';
+            console.log('[Drive Upload] Complete:', message);
+            showToast(message, 'success');
+            
+            window.open(urlWithCache, '_blank');
+            
+        } catch (error) {
+            Logger.error('Drive', 'Ошибка загрузки в Drive', { message: error.message, stack: error.stack?.slice(0, 200) });
+        }
+        return;
+    }
     
     try {
-        let result;
+        showToast('Проверка авторизации Google Drive...', 'info');
         
-        if (isElectron) {
-            console.log('[App] Using Electron IPC');
-            result = await ipcRenderer.invoke('create-google-doc', {
-                title: `Отчёт авто - ${appState.currentReport.vin} - ${formatDateForFile(appState.currentReport.createdAt)}`,
-                content: appState.currentReport.htmlContent
-            });
-            console.log('[App] IPC Result:', result);
-        } else {
-            console.log('[App] Using web version');
-            showToast('Откройте Google Docs и вставьте текст (Ctrl+V)', 'info');
-            copyReportAsText();
-            return;
-        }
+        const isAuthorized = await ipcRenderer.invoke('check-google-auth');
         
-        if (result.success && result.docUrl) {
-            appState.currentReport.googleDocUrl = result.docUrl;
-            await saveData();
-            showToast('Google Doc создан!', 'success');
-            openLink(result.docUrl);
-        } else {
-            throw new Error(result.error || 'Ошибка создания документа');
-        }
-    } catch (error) {
-        console.error('[App] Error:', error);
-        showToast('Ошибка: ' + error.message, 'error');
-        copyReportAsText();
-    }
-}
-
-function htmlToGoogleDocsText(html) {
-    // Простое преобразование HTML в текст с сохранением структуры
-    const temp = document.createElement('div');
-    temp.innerHTML = html;
-    
-    let text = '';
-    
-    // Рекурсивно обходим элементы
-    function processNode(node) {
-        if (node.nodeType === Node.TEXT_NODE) {
-            text += node.textContent;
-        } else if (node.nodeType === Node.ELEMENT_NODE) {
-            const tag = node.tagName.toLowerCase();
-            
-            if (tag === 'h1' || tag === 'h2') {
-                text += '\n\n';
-                for (const child of node.childNodes) processNode(child);
-                text += '\n';
-            } else if (tag === 'h3' || tag === 'h4') {
-                text += '\n';
-                for (const child of node.childNodes) processNode(child);
-                text += '\n';
-            } else if (tag === 'p' || tag === 'div') {
-                for (const child of node.childNodes) processNode(child);
-                text += '\n';
-            } else if (tag === 'br') {
-                text += '\n';
-            } else if (tag === 'li') {
-                text += '• ';
-                for (const child of node.childNodes) processNode(child);
-                text += '\n';
-            } else if (tag === 'tr') {
-                for (const child of node.childNodes) processNode(child);
-                text += '\n';
-            } else if (tag === 'td' || tag === 'th') {
-                for (const child of node.childNodes) processNode(child);
-                text += '\t';
-            } else if (tag === 'table') {
-                text += '\n';
-                for (const child of node.childNodes) processNode(child);
-                text += '\n';
-            } else if (tag !== 'style' && tag !== 'script') {
-                for (const child of node.childNodes) processNode(child);
+        if (!isAuthorized) {
+            const authConfirm = confirm('Google Drive не авторизован. Авторизовать сейчас?');
+            if (authConfirm) {
+                const result = await ipcRenderer.invoke('authorize-google');
+                if (!result.success) {
+                    showToast('Ошибка авторизации', 'error');
+                    return;
+                }
+                showToast('Авторизация успешна!', 'success');
+            } else {
+                return;
             }
         }
+        
+        showToast('Загрузка PDF в Google Drive...', 'info');
+        
+        const pdfFilename = `${sanitizeForFilename(appState.currentReport.vin)}_${formatDateForFile(appState.currentReport.createdAt)}.pdf`;
+        
+        if (appState.currentReport.localPdfPath) {
+            const result = await ipcRenderer.invoke('upload-existing-pdf-to-drive', {
+                localPath: appState.currentReport.localPdfPath,
+                filename: pdfFilename
+            });
+            
+            if (result.success) {
+                appState.currentReport.driveUrl = result.url;
+                appState.currentReport.driveFileId = result.fileId;
+                await saveData();
+                
+                navigator.clipboard.writeText(result.url);
+                showToast('PDF загружен в Drive! Ссылка скопирована', 'success');
+                
+                ipcRenderer.invoke('open-external', result.url);
+            } else {
+                throw new Error(result.error || 'Ошибка загрузки');
+            }
+        } else {
+            const result = await ipcRenderer.invoke('save-and-upload-pdf', {
+                htmlContent: appState.currentReport.htmlContent,
+                filename: pdfFilename
+            });
+            
+            if (result.success) {
+                appState.currentReport.localPdfPath = result.localPath;
+                
+                if (result.driveUrl) {
+                    appState.currentReport.driveUrl = result.driveUrl;
+                    appState.currentReport.driveFileId = result.fileId;
+                    await saveData();
+                    
+                    navigator.clipboard.writeText(result.driveUrl);
+                    showToast('PDF загружен в Drive! Ссылка скопирована', 'success');
+                    
+                    ipcRenderer.invoke('open-external', result.driveUrl);
+                } else {
+                    showToast('PDF сохранён, но не удалось загрузить в Drive', 'warning');
+                }
+            } else {
+                throw new Error(result.error || 'Ошибка создания PDF');
+            }
+        }
+    } catch (error) {
+        console.error('Drive upload error:', error);
+        
+        if (error.message.includes('ECONNRESET') || error.message.includes('token') || error.message.includes('401')) {
+            const reauth = confirm('Проблема с авторизацией Google Drive. Переавторизовать?');
+            if (reauth) {
+                try {
+                    const result = await ipcRenderer.invoke('authorize-google');
+                    if (result.success) {
+                        showToast('Повторите попытку загрузки', 'info');
+                    }
+                } catch (e) {
+                    showToast('Ошибка авторизации', 'error');
+                }
+            }
+        } else {
+            showToast(`Ошибка: ${error.message}`, 'error');
+        }
     }
-    
-    processNode(temp);
-    
-    // Очистка лишних пробелов
-    return text.replace(/\n{3,}/g, '\n\n').trim();
 }
 
-function copyReportAsText() {
-    const text = htmlToGoogleDocsText(appState.currentReport.htmlContent);
-    navigator.clipboard.writeText(text).then(() => {
-        window.open('https://docs.google.com/document/create', '_blank');
-        showToast('Текст скопирован! Вставьте в Google Docs (Ctrl+V)', 'success');
-    });
-}
-
-// ============================================
-// Действия с отчётами
-// ============================================
-
-function filterReports() {
-    renderReportsList();
-}
-
-async function deleteReport(reportId) {
-    if (!confirm('Удалить этот отчёт?')) return;
-    
-    appState.reports = appState.reports.filter(r => r.id !== reportId);
-    await saveData();
-    updateUI();
-    renderReportsList();
-    showToast('Отчёт удалён', 'success');
+function openLinkAndCopy(url) {
+    navigator.clipboard.writeText(url);
+    showToast('Ссылка скопирована!', 'success');
+    if (isElectron) {
+        ipcRenderer.invoke('open-external', url);
+    } else {
+        window.open(url, '_blank');
+    }
 }
 
 function copyReportLink() {
     if (appState.currentReport?.driveUrl) {
-        // Для Electron используем альтернативный метод
         if (isElectron && navigator.clipboard) {
             navigator.clipboard.writeText(appState.currentReport.driveUrl).then(() => {
                 showToast('Ссылка на Drive скопирована!', 'success');
             }).catch(err => {
-                // Фоллбэк через textarea
                 copyToClipboardFallback(appState.currentReport.driveUrl);
             });
         } else {
@@ -3345,7 +3510,6 @@ function copyReportLink() {
     }
 }
 
-// Фоллбэк для копирования (работает всегда)
 function copyToClipboardFallback(text) {
     const textarea = document.createElement('textarea');
     textarea.value = text;
@@ -3365,11 +3529,35 @@ function copyToClipboardFallback(text) {
     document.body.removeChild(textarea);
 }
 
+// ============================================
+// Действия с отчётами
+// ============================================
+
+function filterReports() {
+    renderReportsList();
+}
+
+async function deleteReport(reportId) {
+    if (!confirm('Удалить этот отчёт?')) return;
+    
+    if (!isElectron) {
+        await Storage.deleteReport(reportId);
+    }
+    
+    appState.reports = appState.reports.filter(r => r.id !== reportId);
+    
+    if (isElectron) {
+        await saveData();
+    }
+    
+    updateUI();
+    renderReportsList();
+    showToast('Отчёт удалён', 'success');
+}
 
 async function exportReport() {
     if (!appState.currentReport) return;
     
-    // Экспорт как HTML (для обратной совместимости)
     const html = `<!DOCTYPE html>
 <html lang="ru">
 <head>
@@ -3402,6 +3590,136 @@ async function exportReport() {
         URL.revokeObjectURL(url);
         showToast('HTML скачан', 'success');
     }
+}
+
+// ============================================
+// Управление хранилищем
+// ============================================
+
+async function showStorageStats() {
+    const statsDiv = document.getElementById('storage-stats');
+    if (!statsDiv) return;
+    
+    try {
+        const stats = isElectron 
+            ? { type: 'Electron (файловая система)', reportsCount: appState.reports.length }
+            : await Storage.getStorageStats();
+        
+        statsDiv.innerHTML = `
+            <div class="grid grid-cols-2 gap-4 text-sm">
+                <div>
+                    <span class="text-gray-400">Тип хранилища:</span>
+                    <span class="text-white font-semibold ml-2">${stats.type}</span>
+                </div>
+                <div>
+                    <span class="text-gray-400">Отчётов:</span>
+                    <span class="text-white font-semibold ml-2">${stats.reportsCount}</span>
+                </div>
+                <div>
+                    <span class="text-gray-400">Занято:</span>
+                    <span class="text-white font-semibold ml-2">${stats.usage || stats.estimatedSize}</span>
+                </div>
+                ${stats.available ? `
+                <div>
+                    <span class="text-gray-400">Доступно:</span>
+                    <span class="text-green-400 font-semibold ml-2">${stats.available}</span>
+                </div>
+                ` : ''}
+            </div>
+            ${stats.type === 'IndexedDB' ? `
+                <p class="text-green-400 text-xs mt-3">
+                    <i class="fas fa-check-circle"></i> 
+                    Используется IndexedDB — лимит хранилища практически неограничен
+                </p>
+            ` : stats.type.includes('localStorage') ? `
+                <p class="text-yellow-400 text-xs mt-3">
+                    <i class="fas fa-exclamation-triangle"></i> 
+                    Используется localStorage — лимит ~5-10 MB
+                </p>
+            ` : ''}
+        `;
+        
+        Logger.info('Storage', 'Статистика хранилища', stats);
+    } catch (error) {
+        statsDiv.innerHTML = `<p class="text-red-400">Ошибка получения статистики: ${error.message}</p>`;
+    }
+}
+
+async function exportBackup() {
+    try {
+        showToast('Создание бэкапа...', 'info');
+        
+        let data;
+        if (isElectron) {
+            data = {
+                exportDate: new Date().toISOString(),
+                reports: appState.reports,
+                cars: appState.cars,
+                settings: appState.settings
+            };
+        } else {
+            data = await Storage.exportAllData();
+        }
+        
+        const filename = `car-reports-backup-${new Date().toISOString().split('T')[0]}.json`;
+        const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' });
+        const url = URL.createObjectURL(blob);
+        
+        const a = document.createElement('a');
+        a.href = url;
+        a.download = filename;
+        a.click();
+        
+        URL.revokeObjectURL(url);
+        showToast(`Бэкап сохранён: ${filename}`, 'success');
+        Logger.success('Backup', 'Бэкап создан', { reports: data.reports.length });
+    } catch (error) {
+        Logger.error('Backup', 'Ошибка создания бэкапа', { error: error.message });
+    }
+}
+
+async function importBackup(event) {
+    const file = event.target.files[0];
+    if (!file) return;
+    
+    try {
+        const text = await file.text();
+        const data = JSON.parse(text);
+        
+        if (!data.reports || !Array.isArray(data.reports)) {
+            throw new Error('Неверный формат файла бэкапа');
+        }
+        
+        const confirmMsg = `Импортировать ${data.reports.length} отчётов?\n\nЭто добавит отчёты к существующим (дубликаты будут пропущены).`;
+        if (!confirm(confirmMsg)) return;
+        
+        showToast('Импорт данных...', 'info');
+        
+        const existingIds = new Set(appState.reports.map(r => r.id));
+        const newReports = data.reports.filter(r => !existingIds.has(r.id));
+        
+        if (newReports.length === 0) {
+            showToast('Все отчёты уже существуют', 'warning');
+            return;
+        }
+        
+        appState.reports.push(...newReports);
+        
+        if (data.cars) {
+            appState.cars = { ...appState.cars, ...data.cars };
+        }
+        
+        await saveData();
+        updateUI();
+        renderReportsList();
+        
+        showToast(`Импортировано ${newReports.length} отчётов`, 'success');
+        Logger.success('Backup', 'Импорт завершён', { imported: newReports.length });
+    } catch (error) {
+        Logger.error('Backup', 'Ошибка импорта', { error: error.message });
+    }
+    
+    event.target.value = '';
 }
 
 // ============================================
@@ -3446,16 +3764,11 @@ function toggleKeyVisibility(inputId) {
 function showToast(message, type = 'info') {
     const container = document.getElementById('toast-container');
     if (!container) {
-        // Если контейнер не найден, выводим в консоль
         console.log(`[Toast ${type.toUpperCase()}] ${message}`);
         return;
     }
     
-    // Логируем toast (кроме случаев, когда вызвано из Logger)
     if (typeof Logger !== 'undefined' && !message.startsWith('[')) {
-        const logMethod = type === 'error' ? 'warn' : (type === 'success' ? 'success' : 'info');
-        // Не вызываем Logger для обычных toast, чтобы избежать рекурсии
-        // Но записываем в консоль
         console.log(`[Toast ${type.toUpperCase()}] ${message}`);
     }
     
@@ -3482,7 +3795,6 @@ function showToast(message, type = 'info') {
     
     container.appendChild(toast);
     
-    // Для ошибок показываем дольше
     const duration = type === 'error' ? 5000 : 3000;
     
     setTimeout(() => {
@@ -3493,7 +3805,6 @@ function showToast(message, type = 'info') {
     }, duration);
 }
 
-// Функция для скачивания логов (доступна из консоли и интерфейса)
 function downloadLogs() {
     if (typeof Logger !== 'undefined') {
         Logger.download();
@@ -3503,10 +3814,8 @@ function downloadLogs() {
     }
 }
 
-// Делаем функцию доступной глобально
 window.downloadLogs = downloadLogs;
 
-// Обработка клавиш
 document.addEventListener('keydown', (e) => {
     if (e.key === 'Escape') {
         closeImageModal();
@@ -3517,9 +3826,7 @@ document.addEventListener('keydown', (e) => {
 // Вспомогательные функции для веб-версии
 // ============================================
 
-// Google OAuth для веба
 async function getGoogleAccessToken() {
-    // Проверяем сохраненный токен
     const savedToken = localStorage.getItem('google_access_token');
     const tokenExpiry = localStorage.getItem('google_token_expiry');
     
@@ -3527,7 +3834,6 @@ async function getGoogleAccessToken() {
         const expiryTime = parseInt(tokenExpiry);
         const now = Date.now();
         
-        // Если токен еще действителен (с запасом 5 минут)
         if (now < expiryTime - 5 * 60 * 1000) {
             console.log('[Google Auth] Using cached token, expires in', Math.round((expiryTime - now) / 1000 / 60), 'minutes');
             return savedToken;
@@ -3572,9 +3878,8 @@ async function getGoogleAccessToken() {
                 if (url.includes('access_token')) {
                     const params = new URLSearchParams(url.split('#')[1]);
                     const accessToken = params.get('access_token');
-                    const expiresIn = params.get('expires_in'); // в секундах
+                    const expiresIn = params.get('expires_in');
                     
-                    // Сохраняем токен и время истечения
                     localStorage.setItem('google_access_token', accessToken);
                     const expiryTime = Date.now() + (parseInt(expiresIn || '3600') * 1000);
                     localStorage.setItem('google_token_expiry', expiryTime.toString());
@@ -3600,10 +3905,8 @@ async function getGoogleAccessToken() {
     });
 }
 
-// Конвертация base64 в Blob
 function base64ToBlob(base64, mimeType) {
     try {
-        // Очищаем base64 от возможных пробелов и переносов строк
         const cleanBase64 = base64.replace(/\s/g, '');
         const byteCharacters = atob(cleanBase64);
         const byteNumbers = new Array(byteCharacters.length);
