@@ -2021,7 +2021,7 @@ async function callOpenAIAPI(apiKey, systemPrompt, userPrompt) {
                 'Authorization': `Bearer ${apiKey}`
             },
             body: JSON.stringify({
-                model: 'gpt-4o',
+                model: 'gpt-5.2',
                 messages: [
                     { role: 'system', content: systemPrompt },
                     { 
@@ -2032,7 +2032,7 @@ async function callOpenAIAPI(apiKey, systemPrompt, userPrompt) {
                         ]
                     }
                 ],
-                max_tokens: 8192
+                max_completion_tokens: 8192
             })
         });
     } catch (networkError) {
